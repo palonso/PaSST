@@ -11,7 +11,8 @@ def clean_gt_file(input_file, output_file, data_base, n_bands, min_frames):
     new_data = dict()
     for key, value in data.items():
         # check key exists
-        path = Path(data_base, key)
+        folder = key[:2]
+        path = Path(data_base, folder, key + ".mp4.mmap")
         key_ok, value_ok = False, False
 
         if path.exists():

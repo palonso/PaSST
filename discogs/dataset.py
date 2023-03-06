@@ -82,7 +82,8 @@ class DiscogsDataset(TorchDataset):
         filename = self.filenames[index]
         target = self.groundtruth[filename].astype("float16")
 
-        melspectrogram_file = pathlib.Path(self.base_dir, filename)
+        folder = filename[:2]
+        melspectrogram_file = pathlib.Path(self.data_base, folder, filename + ".mp4.mmap")
         melspectrogram = self.load_melspectrogram(melspectrogram_file)
 
         return melspectrogram, filename, target
