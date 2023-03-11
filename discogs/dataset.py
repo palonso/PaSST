@@ -29,15 +29,16 @@ def default_config():
     subsample = False  # subsample squares from the dataset
     roll = True  # apply roll augmentation
     fold = 1
-    base_dir = "/home/palonso/data/discotube/discotube-specs/"  # base directory of the dataset, change it or make a link
+    base_dir = "/data0/palonso/data/discotube30s/"  # base directory of the dataset, change it or make a link
+    eval_base_dir = ""
 
-    eval_groundtruth = "discogs/gt_val_all_400l.pk"
-    train_groundtruth = "discogs/gt_train_all_400l.pk"
+    eval_groundtruth = "discogs/gt_val_all_400l_clean.pk"
+    train_groundtruth = "discogs/gt_train_all_400l_clean.pk"
     num_of_classes = 400
 
 
 class DiscogsDataset(TorchDataset):
-    def __init__(self, groundtruth_file, base_dir="/home/palonso/data/discotube/discotube-specs/", sample_rate=16000, classes_num=400, clip_length=10, augment=False, hop_size=256, n_bands=96):
+    def __init__(self, groundtruth_file, base_dir="", sample_rate=16000, classes_num=400, clip_length=10, augment=False, hop_size=256, n_bands=96):
         """
         Reads the mel spectrogram chunks with numpy and returns a fixed length mel-spectrogram patch
         """
@@ -83,7 +84,7 @@ class DiscogsDataset(TorchDataset):
         target = self.groundtruth[filename].astype("float16")
 
         folder = filename[:2]
-        melspectrogram_file = pathlib.Path(self.data_base, folder, filename + ".mp4.mmap")
+        melspectrogram_file = pathlib.Path(self.base_dir, folder, filename + ".mp4.mmap")
         melspectrogram = self.load_melspectrogram(melspectrogram_file)
 
         return melspectrogram, filename, target
@@ -177,14 +178,18 @@ def get_ft_weighted_sampler(samples_weights=CMD(".get_ft_cls_balanced_sample_wei
 
 
 @dataset.command
-def get_base_train_set(train_groundtruth):
-    ds = DiscogsDataset(train_groundtruth)
+def get_base_train_set(train_groundtruth, base_dir):
+    ds = DiscogsDataset(train_groundtruth, base_dir=base_dir)
     return ds
 
 
 @dataset.command
-def get_base_test_set(eval_groundtruth):
-    ds = DiscogsDataset(eval_groundtruth)
+def get_base_test_set(eval_groundtruth, base_dir, eval_base_dir):
+    if eval_base_dir:
+        ds = DiscogsDataset(eval_groundtruth, eval_base_dir)
+    else:
+        ds = DiscogsDataset(eval_groundtruth, base_dir)
+
     return ds
 
 
