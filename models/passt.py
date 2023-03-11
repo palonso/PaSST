@@ -649,6 +649,14 @@ def adapt_image_pos_embed_to_passt(posemb, num_tokens=1, gs_new=(), mode='bicubi
     return posemb_tok, freq_new_pos_embed, time_new_pos_embed
 
 
+def adapt_passt_timefreq_embed(freqemb, timeemb, freq_gs_new=(), time_gs_new=(), mode='bicubic'):
+    freqemb_new = F.interpolate(freqemb, size=freq_gs_new, mode=mode, align_corners=False)
+    timeemb_new = F.interpolate(timeemb, size=time_gs_new, mode=mode, align_corners=False)
+    _logger.info('New FREQ Position embedding %s', freqemb_new.shape)
+    _logger.info('New TIME Position embedding %s', timeemb_new.shape)
+    return freqemb_new, timeemb_new
+
+
 def checkpoint_filter_fn(state_dict, model):
     """ convert patch embedding weight from manual patchify + linear proj to conv"""
     out_dict = {}
@@ -665,6 +673,35 @@ def checkpoint_filter_fn(state_dict, model):
         state_dict["new_pos_embed"] = new_pos_embed
         state_dict["freq_new_pos_embed"] = freq_new_pos_embed
         state_dict["time_new_pos_embed"] = time_new_pos_embed
+
+    else:
+        print("new pos embed:", state_dict["new_pos_embed"].shape)
+        print("new pos embed time:", state_dict["freq_new_pos_embed"].shape)
+        print("new pos embed freq:", state_dict["time_new_pos_embed"].shape)
+
+        freq_old_dim = state_dict["freq_new_pos_embed"].numpy().shape[2]
+        time_old_dim = state_dict["time_new_pos_embed"].numpy().shape[3]
+        freq_new_dim = model.patch_embed.grid_size[0]
+        time_new_dim = model.patch_embed.grid_size[1]
+
+        if (freq_old_dim != freq_new_dim) or (time_old_dim !=time_new_dim):
+            _logger.info("Adapting time/freq embedding from PaSST pre-trained model to a new configuration.")
+
+            freq_old_pos_embed = state_dict.pop("freq_new_pos_embed")
+            time_old_pos_embed = state_dict.pop("time_new_pos_embed")
+
+            freq_new_gs = [freq_new_dim, 1]
+            time_new_gs = [1, time_new_dim]
+
+            freq_new_pos_embed, time_new_pos_embed = adapt_passt_timefreq_embed(
+                freq_old_pos_embed,
+                time_old_pos_embed,
+                freq_new_gs,
+                time_new_gs,
+            )
+
+            state_dict["freq_new_pos_embed"] = freq_new_pos_embed
+            state_dict["time_new_pos_embed"] = time_new_pos_embed
 
     for k, v in state_dict.items():
         if 'patch_embed.proj.weight' in k and len(v.shape) < 4:
