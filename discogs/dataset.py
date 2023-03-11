@@ -163,7 +163,7 @@ def get_ft_cls_balanced_sample_weights(train_groundtruth, num_of_classes,
 
 @dataset.command
 def get_ft_weighted_sampler(samples_weights=CMD(".get_ft_cls_balanced_sample_weights"),
-                            epoch_len=100000, sampler_replace=False):
+                            epoch_len=600000, sampler_replace=False):
     num_nodes = int(os.environ.get('num_nodes', 1))
     ddp = int(os.environ.get('DDP', 1))
     num_nodes = max(ddp, num_nodes)
