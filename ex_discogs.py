@@ -222,35 +222,41 @@ class M(Ba3lModule):
             avg_loss = torch.stack([x[net_name + 'val_loss'] for x in outputs]).mean()
             out = torch.cat([x[net_name + 'out'] for x in outputs], dim=0)
             target = torch.cat([x[net_name + 'target'] for x in outputs], dim=0)
-            try:
-                average_precision = metrics.average_precision_score(
-                    target.float().numpy(), out.float().numpy(), average=None)
-            except ValueError:
-                average_precision = np.array([np.nan] * 400)
-            try:
-                roc = metrics.roc_auc_score(target.numpy(), out.numpy(), average=None)
-            except ValueError:
-                roc = np.array([np.nan] * 400)
-            logs = {net_name + 'val.loss': torch.as_tensor(avg_loss).cuda(),
-                    net_name + 'ap': torch.as_tensor(average_precision.mean()).cuda(),
-                    net_name + 'roc': torch.as_tensor(roc.mean()).cuda(),
-                    'step': torch.as_tensor(self.current_epoch).cuda()}
-            torch.save(average_precision, f"ap_perclass_{average_precision.mean()}.pt")
-            print(average_precision)
-            self.log_dict(logs, sync_dist=True)
+
+            if not self.distributed_mode:
+                try:
+                    average_precision = metrics.average_precision_score(
+                        target.float().numpy(), out.float().numpy(), average=None)
+                except ValueError:
+                    average_precision = np.array([np.nan] * self.net.n_classes)
+                try:
+                    roc = metrics.roc_auc_score(target.numpy(), out.numpy(), average=None)
+                except ValueError:
+                    roc = np.array([np.nan] * self.net.n_classes)
+                logs = {net_name + 'val.loss': torch.as_tensor(avg_loss).cuda(),
+                        net_name + 'ap': torch.as_tensor(average_precision.mean()).cuda(),
+                        net_name + 'roc': torch.as_tensor(roc.mean()).cuda(),
+                        'step': torch.as_tensor(self.current_epoch).cuda()}
+                # torch.save(average_precision, f"ap_perclass_{average_precision.mean()}.pt")
+                # print(average_precision)
+                self.log_dict(logs, sync_dist=True)
             if self.distributed_mode:
                 allout = self.all_gather(out)
                 alltarget = self.all_gather(target)
+                alltarget = alltarget.reshape(-1, alltarget.shape[-1]).cpu().numpy()
+                allout = allout.reshape(-1, allout.shape[-1]).cpu().numpy()
 
-                average_precision = metrics.average_precision_score(
-                    alltarget.reshape(-1, alltarget.shape[-1]).cpu().numpy(),
-                    allout.reshape(-1, allout.shape[-1]).cpu().numpy(), average=None)
+                average_precision = metrics.average_precision_score(alltarget, allout, average=None)
+                roc = metrics.roc_auc_score(alltarget, allout, average=None)
                 if self.trainer.is_global_zero:
-                    logs = {net_name + "allap": torch.as_tensor(average_precision.mean()).cuda(),
-                            'step': torch.as_tensor(self.current_epoch).cuda()}
+                    logs = {
+                        net_name + "ap": torch.as_tensor(average_precision.mean()).cuda(),
+                        net_name + "roc": torch.as_tensor(roc.mean()).cuda(),
+                        'step': torch.as_tensor(self.current_epoch).cuda()
+                    }
                     self.log_dict(logs, sync_dist=False)
-            else:
-                self.log_dict({net_name + "allap": logs[net_name + 'ap'], 'step': logs['step']}, sync_dist=True)
+            # else:
+            #     self.log_dict({net_name + "ap": logs[net_name + 'ap'], 'step': logs['step']}, sync_dist=True)
 
     def configure_optimizers(self):
         # REQUIRED
