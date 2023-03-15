@@ -1,8 +1,18 @@
+import comet_ml
+
+import matplotlib as mpl
+mpl.use('Agg')
+import matplotlib.pyplot as plt
+
 import os
 import sys
+from collections import defaultdict
+from itertools import chain
+from pathlib import Path
 
 import torch
 from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.loggers import CometLogger
 from sacred.config_helpers import DynamicIngredient, CMD
 from torch.nn import functional as F
 import numpy as np
@@ -17,9 +27,10 @@ from helpers.mixup import my_mixup
 from helpers.models_size import count_non_zero_params
 from helpers.ramp import exp_warmup_linear_down, cosine_cycle
 from helpers.workersinit import worker_init_fn
+from helpers.spec_masking import SpecMasking
 from sklearn import metrics
 
-ex = Experiment("magnatagatune")
+ex = Experiment("mtt")
 
 # Example call with all the default config:
 # python ex_mtt.py with trainer.precision=16 models.net.arch=passt_deit_bd_p16_384 -p -m mongodb_server:27000:mtt -c "PaSST base"
@@ -53,8 +64,8 @@ def default_conf():
             "models.passt.model_ing",
             arch="passt_deit_bd_p16_384",
             n_classes=50,
-            s_patchout_t=40,
-            s_patchout_f=4,
+            s_patchout_t=0,
+            s_patchout_f=0,
             input_fdim=96,
             input_tdim=625,
         ),  # network config
@@ -78,18 +89,23 @@ def default_conf():
     }
     basedataset = DynamicIngredient("mtt.dataset.dataset", wavmix=1)
     trainer = dict(
-        max_epochs=20,
-        max_steps=5,
+        max_epochs=50,
         gpus=1,
         weights_summary='full',
         benchmark=True,
         num_sanity_val_steps=0,
         reload_dataloaders_every_epoch=True
     )
-    lr = 0.00002 # learning rate
+    lr = 3e-5 # learning rate
+    lr_mult = 0.3
     use_mixup = True
+    use_masking = True
     mixup_alpha = 0.3
 
+    schedule_mode = "cos_cyc"
+    warm_up_len = 5
+    ramp_down_start = 10
+    last_lr_value = 0.01
 
 # register extra possible configs
 add_configs(ex)
@@ -102,7 +118,7 @@ def get_scheduler_lambda(warm_up_len=5, ramp_down_start=50, ramp_down_len=50, la
         return exp_warmup_linear_down(warm_up_len, ramp_down_len, ramp_down_start, last_lr_value)
     if schedule_mode == "cos_cyc":
         return cosine_cycle(warm_up_len, ramp_down_start, last_lr_value)
-    raise RuntimeError(f"schedule_mode={schedule_mode} Unknown for a lambda funtion.")
+    raise RuntimeError(f"schedule_mode={schedule_mode} Unknown for a lambda function.")
 
 
 @ex.command
@@ -127,6 +143,7 @@ class M(Ba3lModule):
         super(M, self).__init__(experiment)
 
         self.use_mixup = self.config.use_mixup or False
+        self.use_masking = self.config.use_masking or False
         self.mixup_alpha = self.config.mixup_alpha
 
         desc, sum_params, sum_non_zero = count_non_zero_params(self.net)
@@ -139,6 +156,9 @@ class M(Ba3lModule):
         self.do_swa = False
 
         self.distributed_mode = self.config.trainer.num_nodes > 1
+
+        if self.use_masking:
+            self.masking = SpecMasking()
 
     def forward(self, x):
         return self.net(x)
@@ -171,6 +191,15 @@ class M(Ba3lModule):
             rn_indices, lam = my_mixup(batch_size, self.mixup_alpha)
             lam = lam.to(x.device)
             x = x * lam.reshape(batch_size, 1, 1, 1) + x[rn_indices] * (1. - lam.reshape(batch_size, 1, 1, 1))
+
+        if self.use_masking:
+            x = self.masking.compute(x)
+
+        for i in range(len(x)):
+            if not Path(f"example{i}.png").exists():
+                patch = x[i].detach().cpu().numpy().squeeze()
+                plt.matshow(patch, aspect="auto")
+                plt.savefig(f"example{i}.png")
 
         y_hat, embed = self.forward(x)
 
@@ -267,19 +296,99 @@ class M(Ba3lModule):
             # else:
             #     self.log_dict({net_name + "ap": logs[net_name + 'ap'], 'step': logs['step']}, sync_dist=True)
 
+    def test_step(self, batch, batch_idx):
+        x, f, y = batch
+        if self.mel:
+            x = self.mel_forward(x)
+
+        results = {}
+        model_name = [("", self.net)]
+        for net_name, net in model_name:
+            y_hat, _ = net(x)
+            samples_loss = F.binary_cross_entropy_with_logits(y_hat, y)
+            loss = samples_loss.mean()
+            out = torch.sigmoid(y_hat.detach())
+            results = {
+                **results,
+                net_name + "test.loss": loss,
+                net_name + "out": out,
+                net_name + "target": y.detach(),
+                }
+        results = {k: v.cpu() for k, v in results.items()}
+        results[net_name + "filename"] = f
+
+        return results
+
+    def test_epoch_end(self, outputs):
+        model_name = [("", self.net)]
+        if self.do_swa:
+            model_name = model_name + [("swa_", self.net_swa)]
+        for net_name, net in model_name:
+            avg_loss = torch.stack([x[net_name + 'test.loss'] for x in outputs]).mean()
+            out = torch.cat([x[net_name + 'out'] for x in outputs], dim=0)
+            target = torch.cat([x[net_name + 'target'] for x in outputs], dim=0)
+            filenames = list(chain.from_iterable([x[net_name + 'filename'] for x in outputs]))
+
+            agg_out = defaultdict(list)
+            agg_target = defaultdict(list)
+            for o, t, f in zip(out.float().numpy(), target.float().numpy(), filenames):
+                agg_out[f].append(o)
+                agg_target[f].append(t)
+            
+            agg_out = np.array([np.mean(o, axis=0) for o in agg_out.values()])
+            agg_target = np.array([np.mean(o, axis=0) for o in agg_target.values()])
+
+            try:
+                average_precision = metrics.average_precision_score(
+                    agg_target, agg_out, average=None)
+            except ValueError:
+                average_precision = np.array([np.nan] * self.net.n_classes)
+            try:
+                roc = metrics.roc_auc_score(agg_target, agg_out, average=None)
+            except ValueError:
+                roc = np.array([np.nan] * self.net.n_classes)
+            logs = {net_name + 'test.loss': torch.as_tensor(avg_loss).cuda(),
+                    net_name + 'test.ap': torch.as_tensor(average_precision.mean()).cuda(),
+                    net_name + 'test.roc': torch.as_tensor(roc.mean()).cuda(),
+                    'step': torch.as_tensor(self.current_epoch).cuda()}
+            self.log_dict(logs, sync_dist=True)
+
     def configure_optimizers(self):
         # REQUIRED
         # can return multiple optimizers and learning_rate schedulers
         # (LBFGS it is automatically supported, no need for closure function)
-        optimizer = get_optimizer(self.parameters())
         # torch.optim.Adam(self.parameters(), lr=self.config.lr)
+
+        lr = self.config.lr
+        lr_mult = self.config.lr_mult
+        layer_names = []
+        for idx, (name, param) in enumerate(self.net.named_parameters()):
+            layer_names.append(name)
+            print(f'{idx}: {name}')
+        
+        layer_names.reverse()
+
+        parameters = []
+        # store params & learning rates
+        for idx, name in enumerate(layer_names):
+            # display info
+            print(f'{idx}: lr = {lr:.6f}, {name}')
+            # append layer parameters
+            parameters += [{'params': [p for n, p in self.net.named_parameters() if n == name and p.requires_grad],
+                            'lr': lr}]
+            # update learning rate
+            lr *= lr_mult
+
+        optimizer = get_optimizer(parameters)
+
         return {
             'optimizer': optimizer,
             'lr_scheduler': get_lr_scheduler(optimizer)
         }
 
     def configure_callbacks(self):
-        return get_extra_checkpoint_callback() + get_extra_swa_callback()
+        # return get_extra_checkpoint_callback() + get_extra_swa_callback()
+        return get_extra_checkpoint_callback()
 
 
 @ex.command
@@ -313,6 +422,13 @@ def main(_run, _config, _log, _rnd, _seed):
     val_loaders = ex.get_val_dataloaders()
 
     modul = M(ex)
+
+    comet_logger = CometLogger(
+        project_name=_config["basedataset"]["name"],
+        api_key=os.environ["COMET_API_KEY"],
+        )
+    trainer.logger = comet_logger
+    comet_logger.log_hyperparams(_config)
 
     trainer.fit(
         modul,
