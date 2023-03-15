@@ -165,6 +165,11 @@ default_cfgs = {
         url='https://github.com/kkoutini/PaSST/releases/download/v0.0.1-audioset/passt-s-f128-p16-s10-ap.476-swa.pt',
         mean=IMAGENET_DEFAULT_MEAN, std=IMAGENET_DEFAULT_STD, input_size=(1, 128, 998), crop_pct=1.0,
         classifier=('head.1', 'head_dist'), num_classes=527),
+    'passt_s_swa_p16_128_ap476_discogs': _cfg(
+        # url='https://drive.google.com/uc?export=download&id=1S4FKkyQPl1FWf8SlngN46tvH5rt4bZij',
+        url='',
+        mean=IMAGENET_DEFAULT_MEAN, std=IMAGENET_DEFAULT_STD, input_size=(1, 96, 625), crop_pct=1.0,
+        classifier=('head.1', 'head_dist'), num_classes=400),
     'passt_s_swa_p16_128_ap4761': _cfg(
         url='https://github.com/kkoutini/PaSST/releases/download/v0.0.2-audioset/passt-s-f128-p16-s10-ap.4761-swa.pt',
         mean=IMAGENET_DEFAULT_MEAN, std=IMAGENET_DEFAULT_STD, input_size=(1, 128, 998), crop_pct=1.0,
@@ -684,7 +689,7 @@ def checkpoint_filter_fn(state_dict, model):
         freq_new_dim = model.patch_embed.grid_size[0]
         time_new_dim = model.patch_embed.grid_size[1]
 
-        if (freq_old_dim != freq_new_dim) or (time_old_dim !=time_new_dim):
+        if (freq_old_dim != freq_new_dim) or (time_old_dim != time_new_dim):
             _logger.info("Adapting time/freq embedding from PaSST pre-trained model to a new configuration.")
 
             freq_old_pos_embed = state_dict.pop("freq_new_pos_embed")
@@ -773,6 +778,31 @@ def passt_s_swa_p16_128_ap476(pretrained=False, **kwargs):
             f"This model was pre-trained with strides {(10, 10)}, but now you set (fstride,tstride) to {model_kwargs.get('stride')}.")
     model = _create_vision_transformer(
         'passt_s_swa_p16_128_ap476', pretrained=pretrained, distilled=True, **model_kwargs)
+    return model
+
+
+def passt_s_swa_p16_128_ap476_discogs(pretrained=False, **kwargs):
+    """ PaSST pre-trained on AudioSet
+    """
+    print("\n\n Loading PaSST pre-trained on AudioSet Patch 16 stride 10 structured patchout mAP=476 \n\n")
+    model_kwargs = dict(patch_size=16, embed_dim=768, depth=12, num_heads=12, **kwargs)
+    if model_kwargs.get("stride") != (10, 10):
+        warnings.warn(
+            f"This model was pre-trained with strides {(10, 10)}, but now you set (fstride,tstride) to {model_kwargs.get('stride')}.")
+    model = _create_vision_transformer(
+        'passt_s_swa_p16_128_ap476_discogs', pretrained=pretrained, distilled=True, **model_kwargs)
+
+    state_dict = torch.load("/home/palonso/reps/PaSST/output/discogs/_13/checkpoints/epoch=126-step=1587499.ckpt")["state_dict"]
+    model_state_dict = OrderedDict([(key[4:], value) for key, value in state_dict.items() if key.startswith("net.")])
+    delete = []
+    for key in model_state_dict.keys():
+        # head size may mismatch
+        if "head" in key:
+            delete.append(key)
+    for key in delete:
+        del model_state_dict[key]
+
+    model.load_state_dict(model_state_dict, strict=False)
     return model
 
 
@@ -986,6 +1016,8 @@ def get_model(arch="passt_s_swa_p16_128_ap476", pretrained=True, n_classes=527, 
         model_func = passt_s_f128_20sec_p16_s10_ap474_swa
     elif arch == "passt_s_f128_30sec_p16_s10_ap473":
         model_func = passt_s_f128_30sec_p16_s10_ap473_swa
+    elif arch == "passt_s_swa_p16_128_ap476_discogs":
+        model_func = passt_s_swa_p16_128_ap476_discogs
 
     if model_func is None:
         raise RuntimeError(f"Unknown model {arch}")
