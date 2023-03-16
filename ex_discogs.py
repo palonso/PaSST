@@ -1,8 +1,15 @@
+import comet_ml
+
+import matplotlib as mpl
+mpl.use('Agg')
+
 import os
+from pathlib import Path
 import sys
 
 import torch
 from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.loggers import CometLogger
 from sacred.config_helpers import DynamicIngredient, CMD
 from torch.nn import functional as F
 import numpy as np
@@ -11,6 +18,8 @@ from ba3l.experiment import Experiment
 from ba3l.module import Ba3lModule
 
 from torch.utils.data import DataLoader
+from tqdm import tqdm
+import matplotlib.pyplot as plt
 
 from config_updates import add_configs
 from helpers.mixup import my_mixup
@@ -71,7 +80,7 @@ def default_conf():
             fmax=None,
             norm=1,
             fmin_aug_range=10,
-            fmax_aug_range=2000
+            fmax_aug_range=2000,
         )
     }
     basedataset = DynamicIngredient("discogs.dataset.dataset", wavmix=1)
@@ -162,6 +171,13 @@ class M(Ba3lModule):
             rn_indices, lam = my_mixup(batch_size, self.mixup_alpha)
             lam = lam.to(x.device)
             x = x * lam.reshape(batch_size, 1, 1, 1) + x[rn_indices] * (1. - lam.reshape(batch_size, 1, 1, 1))
+
+        for i in range(len(x)):
+            if not Path(f"example{i}.png").exists():
+                patch = x[i].detach().cpu().numpy().squeeze()
+                plt.matshow(patch, aspect="auto")
+                plt.colorbar()
+                plt.savefig(f"example{i}.png")
 
         y_hat, embed = self.forward(x)
 
@@ -305,6 +321,14 @@ def main(_run, _config, _log, _rnd, _seed):
 
     modul = M(ex)
 
+    if os.environ["NODE_RANK"] == "0":
+        comet_logger = CometLogger(
+            project_name=_config["basedataset"]["name"],
+            api_key=os.environ["COMET_API_KEY"],
+            )
+        trainer.logger = comet_logger
+        comet_logger.log_hyperparams(_config)
+
     trainer.fit(
         modul,
         train_dataloader=train_loader,
@@ -389,6 +413,21 @@ def evaluate_only(_run, _config, _log, _rnd, _seed):
     print("\n\n Validtaion:")
     print(res)
 
+@ex.command
+def compute_norm_stats(_run, _config, _log, _rnd, _seed):
+    # force overriding the config, not logged = not recommended
+    loader = ex.get_train_dataloaders()
+    mean = []
+    std = []
+
+    for i, (audio_input, _, _) in tqdm(enumerate(loader), total=len(loader)):
+        audio_input = audio_input.type(torch.DoubleTensor)
+        cur_mean = torch.mean(audio_input)
+        cur_std = torch.std(audio_input)
+        mean.append(cur_mean)
+        std.append(cur_std)
+        # print(cur_mean, cur_std, np.max(audio_input), np.min(audio_input))
+    print(np.mean(mean), np.mean(std))
 
 @ex.command
 def test_loaders():

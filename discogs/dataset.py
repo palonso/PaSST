@@ -25,7 +25,7 @@ dataset = Dataset('discogs')
 @dataset.config
 def default_config():
     name = 'discogs'  # dataset name
-    normalize = False  # normalize dataset
+    normalize = True  # normalize dataset
     subsample = False  # subsample squares from the dataset
     roll = True  # apply roll augmentation
     fold = 1
@@ -54,11 +54,10 @@ class DiscogsDataset(TorchDataset):
         self.classes_num = classes_num
         self.augment = augment
         if augment:
-            print(f"Will agument data from {groundtruth_file}")
+            print(f"Will augment data from {groundtruth_file}")
 
         self.melspectrogram_size = clip_length * sample_rate // hop_size
         self.n_bands = n_bands
-        self.intro_outro_offset = self.melspectrogram_size
 
     def __len__(self):
         return self.length
@@ -92,8 +91,8 @@ class DiscogsDataset(TorchDataset):
     def load_melspectrogram(self, melspectrogram_file: pathlib.Path):
         frames_num = melspectrogram_file.stat().st_size // (2 * self.n_bands)  # each float16 has 2 bytes
         frames_to_read = min(self.melspectrogram_size, frames_num)
-        max_frame = frames_num - self.melspectrogram_size - self.intro_outro_offset
-        min_frame = self.intro_outro_offset
+        max_frame = frames_num - self.melspectrogram_size
+        min_frame = 0
 
         if max_frame < min_frame:
             max_frame = frames_num - self.melspectrogram_size
@@ -163,7 +162,7 @@ def get_ft_cls_balanced_sample_weights(train_groundtruth, num_of_classes,
 
 @dataset.command
 def get_ft_weighted_sampler(samples_weights=CMD(".get_ft_cls_balanced_sample_weights"),
-                            epoch_len=600000, sampler_replace=False):
+                            epoch_len=200000, sampler_replace=False):
     num_nodes = int(os.environ.get('num_nodes', 1))
     ddp = int(os.environ.get('DDP', 1))
     num_nodes = max(ddp, num_nodes)
@@ -194,7 +193,7 @@ def get_base_test_set(eval_groundtruth, base_dir, eval_base_dir):
 
 
 @dataset.command(prefix='roll_conf')
-def get_roll_func(axis=1, shift=None, shift_range=50):
+def get_roll_func(axis=-1, shift=None, shift_range=50):
     print("rolling...")
 
     def roll_func(b):
@@ -210,14 +209,27 @@ def get_roll_func(axis=1, shift=None, shift_range=50):
     return roll_func
 
 
+@dataset.command(prefix='norm_conf')
+def get_norm_func(norm_mean=2.06755686098554, norm_std=1.268292820667291):
+    print("normalizing...")
+
+    def norm_func(b):
+        x, i, y = b
+        x = torch.as_tensor(x)
+
+        x = (x - norm_mean) / (norm_std * 2)
+
+        return x, i, y
+
+    return norm_func
+
+
 @dataset.command
 def get_train_set(normalize, roll, wavmix=False):
     ds = get_base_train_set()
     # get_ir_sample()
     if normalize:
-        print("normalized train!")
-        fill_norms()
-        ds = PreprocessDataset(ds, norm_func)
+        ds = PreprocessDataset(ds, get_norm_func())
     if roll:
         ds = PreprocessDataset(ds, get_roll_func())
 
@@ -229,9 +241,7 @@ def get_train_set(normalize, roll, wavmix=False):
 def get_test_set(normalize):
     ds = get_base_test_set()
     if normalize:
-        print("normalized test!")
-        fill_norms()
-        ds = PreprocessDataset(ds, norm_func)
+        ds = PreprocessDataset(ds, get_norm_func())
     return ds
 
 
