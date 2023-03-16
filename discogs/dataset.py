@@ -27,7 +27,7 @@ def default_config():
     name = 'discogs'  # dataset name
     normalize = True  # normalize dataset
     subsample = False  # subsample squares from the dataset
-    roll = True  # apply roll augmentation
+    roll = False  # apply roll augmentation
     fold = 1
     base_dir = "/data0/palonso/data/discotube30s/"  # base directory of the dataset, change it or make a link
     eval_base_dir = ""
