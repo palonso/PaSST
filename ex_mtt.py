@@ -4,6 +4,7 @@ import matplotlib as mpl
 mpl.use('Agg')
 import matplotlib.pyplot as plt
 
+import logging
 import os
 import sys
 from collections import defaultdict
@@ -15,6 +16,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import CometLogger
 from sacred.config_helpers import DynamicIngredient, CMD
 from torch.nn import functional as F
+from tqdm import tqdm
 import numpy as np
 
 from ba3l.experiment import Experiment
@@ -29,6 +31,10 @@ from helpers.ramp import exp_warmup_linear_down, cosine_cycle
 from helpers.workersinit import worker_init_fn
 from helpers.spec_masking import SpecMasking
 from sklearn import metrics
+
+logger = logging.getLogger()
+logger.setLevel(logging.WARNING)
+
 
 ex = Experiment("mtt")
 
@@ -364,8 +370,7 @@ class M(Ba3lModule):
         layer_names = []
         for idx, (name, param) in enumerate(self.net.named_parameters()):
             layer_names.append(name)
-            print(f'{idx}: {name}')
-        
+ 
         layer_names.reverse()
 
         parameters = []
@@ -518,6 +523,24 @@ def evaluate_only(_run, _config, _log, _rnd, _seed):
     res = trainer.validate(modul, val_dataloaders=val_loader)
     print("\n\n Validtaion:")
     print(res)
+
+
+@ex.command
+def compute_norm_stats(_run, _config, _log, _rnd, _seed):
+    # force overriding the config, not logged = not recommended
+    loader = ex.get_train_dataloaders()
+    mean = []
+    std = []
+
+    for i, (audio_input, _, _) in tqdm(enumerate(loader), total=len(loader)):
+        audio_input = audio_input.type(torch.DoubleTensor)
+        cur_mean = torch.mean(audio_input)
+        cur_std = torch.std(audio_input)
+        mean.append(cur_mean)
+        std.append(cur_std)
+        # print(cur_mean, cur_std, np.max(audio_input), np.min(audio_input))
+    print("mean:", np.mean(mean))
+    print("std:", np.mean(std))
 
 
 @ex.command
