@@ -781,7 +781,7 @@ def passt_s_swa_p16_128_ap476(pretrained=False, **kwargs):
     return model
 
 
-def passt_s_swa_p16_128_ap476_discogs(pretrained=False, **kwargs):
+def passt_s_swa_p16_128_ap476_discogs(pretrained=False, checkpoint="", **kwargs):
     """ PaSST pre-trained on AudioSet
     """
     print("\n\n Loading PaSST pre-trained on AudioSet Patch 16 stride 10 structured patchout mAP=476 \n\n")
@@ -792,17 +792,24 @@ def passt_s_swa_p16_128_ap476_discogs(pretrained=False, **kwargs):
     model = _create_vision_transformer(
         'passt_s_swa_p16_128_ap476_discogs', pretrained=pretrained, distilled=True, **model_kwargs)
 
-    state_dict = torch.load("/home/palonso/reps/PaSST/output/discogs/_13/checkpoints/epoch=126-step=1587499.ckpt")["state_dict"]
-    model_state_dict = OrderedDict([(key[4:], value) for key, value in state_dict.items() if key.startswith("net.")])
-    delete = []
-    for key in model_state_dict.keys():
-        # head size may mismatch
-        if "head" in key:
-            delete.append(key)
-    for key in delete:
-        del model_state_dict[key]
+    # state_dict = torch.load("/home/palonso/reps/PaSST/output/discogs/_13/checkpoints/epoch=126-step=1587499.ckpt")["state_dict"]
+    if checkpoint:
+        state_dict = torch.load(checkpoint)["state_dict"]
+        model_state_dict = OrderedDict([(key[4:], value) for key, value in state_dict.items() if key.startswith("net.")])
+        delete = []
+        for key in model_state_dict.keys():
+            # head size may mismatch
+            if "head" in key:
+                delete.append(key)
+        for key in delete:
+            del model_state_dict[key]
 
-    model.load_state_dict(model_state_dict, strict=False)
+        missing_keys, unexpected_keys = model.load_state_dict(model_state_dict, strict=False)
+        print(f"{len(missing_keys)} missing keys: ", missing_keys)
+        print(f"{len(unexpected_keys)} unexpected keys: ", unexpected_keys)
+    else:
+        print("Not loading any checkpoint!!")
+
     return model
 
 
@@ -969,10 +976,20 @@ def lighten_model(model, cut_depth=0):
 
 
 @model_ing.command
-def get_model(arch="passt_s_swa_p16_128_ap476", pretrained=True, n_classes=527, in_channels=1, fstride=10,
-              tstride=10,
-              input_fdim=128, input_tdim=998, u_patchout=0, s_patchout_t=0, s_patchout_f=0,
-              ):
+def get_model(
+    arch="passt_s_swa_p16_128_ap476",
+    pretrained=True,
+    n_classes=527,
+    in_channels=1,
+    fstride=10,
+    tstride=10,
+    input_fdim=128,
+    input_tdim=998,
+    u_patchout=0,
+    s_patchout_t=0,
+    s_patchout_f=0,
+    checkpoint="",
+):
     """
     :param arch: Base ViT or Deit architecture
     :param pretrained: use pretrained model on imagenet
@@ -1023,7 +1040,7 @@ def get_model(arch="passt_s_swa_p16_128_ap476", pretrained=True, n_classes=527, 
         raise RuntimeError(f"Unknown model {arch}")
     model = model_func(pretrained=pretrained, num_classes=n_classes, in_chans=in_channels,
                        img_size=input_size, stride=stride, u_patchout=u_patchout,
-                       s_patchout_t=s_patchout_t, s_patchout_f=s_patchout_f)
+                       s_patchout_t=s_patchout_t, s_patchout_f=s_patchout_f, checkpoint=checkpoint)
     model = fix_embedding_layer(model)
     model = lighten_model(model)
     print(model)

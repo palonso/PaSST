@@ -74,6 +74,7 @@ def default_conf():
             s_patchout_f=0,
             input_fdim=96,
             input_tdim=625,
+            checkpoint="/home/palonso/reps/PaSST/output/discogs/945693489efb439996d141b35a2ec63d/checkpoints/epoch=45-step=191681.ckpt"
         ),  # network config
         "mel": DynamicIngredient(
             "models.preprocess.model_ing",
@@ -95,7 +96,7 @@ def default_conf():
     }
     basedataset = DynamicIngredient("mtt.dataset.dataset", wavmix=1)
     trainer = dict(
-        max_epochs=50,
+        max_epochs=30,
         gpus=1,
         weights_summary='full',
         benchmark=True,
@@ -103,27 +104,29 @@ def default_conf():
         reload_dataloaders_every_epoch=True
     )
     lr = 3e-5 # learning rate
-    lr_mult = 0.3
-    use_mixup = True
+    lr_mult = 0.9
+    use_mixup = False
     use_masking = True
     mixup_alpha = 0.3
 
     schedule_mode = "cos_cyc"
     warm_up_len = 5
-    ramp_down_start = 10
+    cycle_len = 5
+    ramp_down_start = 20
     last_lr_value = 0.01
+    weight_decay= 0.01
 
 # register extra possible configs
 add_configs(ex)
 
 
 @ex.command
-def get_scheduler_lambda(warm_up_len=5, ramp_down_start=50, ramp_down_len=50, last_lr_value=0.01,
+def get_scheduler_lambda(warm_up_len=5, cycle_len=5, ramp_down_start=50, ramp_down_len=50, last_lr_value=0.01,
                          schedule_mode="exp_lin"):
     if schedule_mode == "exp_lin":
         return exp_warmup_linear_down(warm_up_len, ramp_down_len, ramp_down_start, last_lr_value)
     if schedule_mode == "cos_cyc":
-        return cosine_cycle(warm_up_len, ramp_down_start, last_lr_value)
+        return cosine_cycle(cycle_len, ramp_down_start, last_lr_value)
     raise RuntimeError(f"schedule_mode={schedule_mode} Unknown for a lambda function.")
 
 
@@ -366,6 +369,7 @@ class M(Ba3lModule):
         # torch.optim.Adam(self.parameters(), lr=self.config.lr)
 
         lr = self.config.lr
+        lr_orig = lr
         lr_mult = self.config.lr_mult
         layer_names = []
         for idx, (name, param) in enumerate(self.net.named_parameters()):
@@ -375,14 +379,20 @@ class M(Ba3lModule):
 
         parameters = []
         # store params & learning rates
+        next_block = "blocks.11"
         for idx, name in enumerate(layer_names):
+            # update learning rate
+            if name.startswith(next_block):
+                bn = int(name.split(".")[1])
+                next_block = f"blocks.{bn - 1}"
+
+                lr *= lr_mult
+
             # display info
-            print(f'{idx}: lr = {lr:.6f}, {name}')
+            print(f'{idx}: lr = {lr_orig if name in ("dist_token", "cls_token") else lr:.9f}, {name}')
             # append layer parameters
             parameters += [{'params': [p for n, p in self.net.named_parameters() if n == name and p.requires_grad],
-                            'lr': lr}]
-            # update learning rate
-            lr *= lr_mult
+    'lr': lr_orig if name in ("dist_token", "cls_token") else lr}]
 
         optimizer = get_optimizer(parameters)
 
@@ -444,6 +454,7 @@ def main(_run, _config, _log, _rnd, _seed):
     trainer.test(
         model=modul,
         test_dataloaders=val_loaders["test"],
+        ckpt_path="best",
     )
 
     return {"done": True}
