@@ -5,6 +5,7 @@ mpl.use('Agg')
 
 import os
 from pathlib import Path
+from datetime import datetime
 import sys
 
 import torch
@@ -26,6 +27,7 @@ from helpers.mixup import my_mixup
 from helpers.models_size import count_non_zero_params
 from helpers.ramp import exp_warmup_linear_down, cosine_cycle
 from helpers.workersinit import worker_init_fn
+from helpers.spec_masking import SpecMasking
 from sklearn import metrics
 
 ex = Experiment("discogs")
@@ -60,8 +62,8 @@ def default_conf():
             "models.passt.model_ing",
             arch="passt_deit_bd_p16_384",
             n_classes=400,
-            s_patchout_t=40,
-            s_patchout_f=4,
+            s_patchout_t=30,
+            s_patchout_f=3,
             input_fdim=96,
             input_tdim=625,
         ),  # network config
@@ -84,11 +86,20 @@ def default_conf():
         )
     }
     basedataset = DynamicIngredient("discogs.dataset.dataset", wavmix=1)
-    trainer = dict(max_epochs=130, gpus=1, weights_summary='full', benchmark=True, num_sanity_val_steps=0,
-                   reload_dataloaders_every_epoch=True)
+    trainer = dict(
+        max_epochs=130,
+        gpus=1,
+        weights_summary='full',
+        benchmark=True,
+        num_sanity_val_steps=0,
+        reload_dataloaders_every_epoch=True,
+        sync_batchnorm=True,
+        )
     lr = 0.00002 # learning rate
     use_mixup = True
+    use_masking = True
     mixup_alpha = 0.3
+    timestamp = datetime.now().strftime("%y%m%d-%H%M%S")
 
 
 # register extra possible configs
@@ -127,6 +138,7 @@ class M(Ba3lModule):
         super(M, self).__init__(experiment)
 
         self.use_mixup = self.config.use_mixup or False
+        self.use_masking = self.config.use_masking or False
         self.mixup_alpha = self.config.mixup_alpha
 
         desc, sum_params, sum_non_zero = count_non_zero_params(self.net)
@@ -136,9 +148,12 @@ class M(Ba3lModule):
         # in case we need embedings for the DA
         self.net.return_embed = True
         self.dyn_norm = self.config.dyn_norm
-        self.do_swa = False
+        self.do_swa = True
 
         self.distributed_mode = self.config.trainer.num_nodes > 1
+
+        if self.use_masking:
+            self.masking = SpecMasking()
 
     def forward(self, x):
         return self.net(x)
@@ -171,6 +186,9 @@ class M(Ba3lModule):
             rn_indices, lam = my_mixup(batch_size, self.mixup_alpha)
             lam = lam.to(x.device)
             x = x * lam.reshape(batch_size, 1, 1, 1) + x[rn_indices] * (1. - lam.reshape(batch_size, 1, 1, 1))
+
+        if self.use_masking:
+            x = self.masking.compute(x)
 
         for i in range(len(x)):
             if not Path(f"example{i}.png").exists():
@@ -322,9 +340,13 @@ def main(_run, _config, _log, _rnd, _seed):
     modul = M(ex)
 
     if os.environ["NODE_RANK"] == "0":
+        project_name = _config["basedataset"]["name"]
+        save_dir = Path("output", project_name, _config["timestamp"])
         comet_logger = CometLogger(
-            project_name=_config["basedataset"]["name"],
+            project_name=project_name,
             api_key=os.environ["COMET_API_KEY"],
+            save_dir=save_dir,
+            experiment_name=_config["timestamp"],
             )
         trainer.logger = comet_logger
         comet_logger.log_hyperparams(_config)
@@ -334,6 +356,8 @@ def main(_run, _config, _log, _rnd, _seed):
         train_dataloader=train_loader,
         val_dataloaders=val_loader,
     )
+
+    torch.save(modul.net_swa, save_dir)
 
     return {"done": True}
 

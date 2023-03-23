@@ -177,17 +177,17 @@ def get_ft_weighted_sampler(samples_weights=CMD(".get_ft_cls_balanced_sample_wei
 
 
 @dataset.command
-def get_base_train_set(train_groundtruth, base_dir):
-    ds = DiscogsDataset(train_groundtruth, base_dir=base_dir)
+def get_base_train_set(train_groundtruth, base_dir, clip_length):
+    ds = DiscogsDataset(train_groundtruth, base_dir=base_dir, clip_length=clip_length)
     return ds
 
 
 @dataset.command
-def get_base_test_set(eval_groundtruth, base_dir, eval_base_dir):
+def get_base_test_set(eval_groundtruth, base_dir, eval_base_dir, clip_length):
     if eval_base_dir:
-        ds = DiscogsDataset(eval_groundtruth, eval_base_dir)
+        ds = DiscogsDataset(eval_groundtruth, eval_base_dir, clip_length=clip_length)
     else:
-        ds = DiscogsDataset(eval_groundtruth, base_dir)
+        ds = DiscogsDataset(eval_groundtruth, base_dir, clip_length=clip_length)
 
     return ds
 
