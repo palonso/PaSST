@@ -8,7 +8,7 @@ class SpecMasking:
             p=0.2,
             iid_masks=True,
             time_masks=20,
-            freq_masks=10
+            freq_masks=8,
         ):
         self.timeMasking = transforms.TimeMasking(
             time_mask_param=time_mask_param,
