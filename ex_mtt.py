@@ -107,6 +107,8 @@ def default_conf():
     lr_mult = 0.9
     use_mixup = False
     use_masking = True
+    freq_masks = 10
+    time_masks = 20
     mixup_alpha = 0.3
 
     schedule_mode = "cos_cyc"
@@ -167,7 +169,10 @@ class M(Ba3lModule):
         self.distributed_mode = self.config.trainer.num_nodes > 1
 
         if self.use_masking:
-            self.masking = SpecMasking()
+            self.masking = SpecMasking(
+                freq_masks=self.config.freq_masks,
+                time_masks=self.config.time_masks,
+            )
 
     def forward(self, x):
         return self.net(x)
