@@ -352,10 +352,13 @@ class Block(nn.Module):
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
 
-    def forward(self, x):
-        x = x + self.drop_path(self.attn(self.norm1(x)))
-        x = x + self.drop_path(self.mlp(self.norm2(x)))
-        return x
+    def forward(self, x, return_self_attention=False):
+        if return_self_attention:
+            return self.attn(self.norm1(x))
+        else:
+            x = x + self.drop_path(self.attn(self.norm1(x)))
+            x = x + self.drop_path(self.mlp(self.norm2(x)))
+            return x
 
 
 class PaSST(nn.Module):
@@ -480,6 +483,49 @@ class PaSST(nn.Module):
         self.head = nn.Linear(self.embed_dim, num_classes) if num_classes > 0 else nn.Identity()
         if self.num_tokens == 2:
             self.head_dist = nn.Linear(self.embed_dim, self.num_classes) if num_classes > 0 else nn.Identity()
+
+    def forward_until_block(self, x, n_block=-1):
+        x = self.patch_embed(x)  # [b, e, f, t]
+        B_dim, E_dim, F_dim, T_dim = x.shape  # slow
+        # if first_RUN: print(" patch_embed : ", x.shape)
+        # Adding Time/Freq information
+        # if first_RUN: print(" self.time_new_pos_embed.shape", self.time_new_pos_embed.shape)
+        time_new_pos_embed = self.time_new_pos_embed
+        if x.shape[-1] < time_new_pos_embed.shape[-1]:
+            time_new_pos_embed = time_new_pos_embed[:, :, :, :x.shape[-1]]
+        else:
+            warnings.warn(
+                f"the patches shape:{x.shape} are larger than the expected time encodings {time_new_pos_embed.shape}, x will be cut")
+            x = x[:, :, :, :time_new_pos_embed.shape[-1]]
+        x = x + time_new_pos_embed
+        # if first_RUN: print(" self.freq_new_pos_embed.shape", self.freq_new_pos_embed.shape)
+        x = x + self.freq_new_pos_embed
+
+        ###
+        # Flatten the sequence
+        x = x.flatten(2).transpose(1, 2)
+        # Unstructured Patchout
+        # if first_RUN: print("X flattened", x.size())
+        # Add the C/D tokens
+        cls_tokens = self.cls_token.expand(B_dim, -1, -1) + self.new_pos_embed[:, :1, :]
+        if self.dist_token is None:
+            x = torch.cat((cls_tokens, x), dim=1)
+        else:
+            dist_token = self.dist_token.expand(B_dim, -1, -1) + self.new_pos_embed[:, 1:, :]
+            # if first_RUN: print(" self.dist_token.shape", dist_token.shape)
+            x = torch.cat((cls_tokens, dist_token, x), dim=1)
+
+        # if first_RUN: print(" final sequence x", x.shape)
+        x = self.pos_drop(x)
+        for i, block in enumerate(self.blocks):
+            if i == n_block:
+                x = block(x, return_self_attention=True)
+                # print(f"returning self-attention from block {i}")
+                return x
+            else:
+                x = block(x)
+        # print("return last block")
+        return x
 
     def forward_features(self, x):
         global first_RUN  # not jit friendly? use trace instead
@@ -781,7 +827,7 @@ def passt_s_swa_p16_128_ap476(pretrained=False, **kwargs):
     return model
 
 
-def passt_s_swa_p16_128_ap476_discogs(pretrained=False, checkpoint="", **kwargs):
+def passt_s_swa_p16_128_ap476_discogs(pretrained=False, **kwargs):
     """ PaSST pre-trained on AudioSet
     """
     print("\n\n Loading PaSST pre-trained on AudioSet Patch 16 stride 10 structured patchout mAP=476 \n\n")
@@ -793,22 +839,6 @@ def passt_s_swa_p16_128_ap476_discogs(pretrained=False, checkpoint="", **kwargs)
         'passt_s_swa_p16_128_ap476_discogs', pretrained=pretrained, distilled=True, **model_kwargs)
 
     # state_dict = torch.load("/home/palonso/reps/PaSST/output/discogs/_13/checkpoints/epoch=126-step=1587499.ckpt")["state_dict"]
-    if checkpoint:
-        state_dict = torch.load(checkpoint)["state_dict"]
-        model_state_dict = OrderedDict([(key[4:], value) for key, value in state_dict.items() if key.startswith("net.")])
-        delete = []
-        for key in model_state_dict.keys():
-            # head size may mismatch
-            if "head" in key:
-                delete.append(key)
-        for key in delete:
-            del model_state_dict[key]
-
-        missing_keys, unexpected_keys = model.load_state_dict(model_state_dict, strict=False)
-        print(f"{len(missing_keys)} missing keys: ", missing_keys)
-        print(f"{len(unexpected_keys)} unexpected keys: ", unexpected_keys)
-    else:
-        print("Not loading any checkpoint!!")
 
     return model
 
@@ -1040,10 +1070,28 @@ def get_model(
         raise RuntimeError(f"Unknown model {arch}")
     model = model_func(pretrained=pretrained, num_classes=n_classes, in_chans=in_channels,
                        img_size=input_size, stride=stride, u_patchout=u_patchout,
-                       s_patchout_t=s_patchout_t, s_patchout_f=s_patchout_f, checkpoint=checkpoint)
+                       s_patchout_t=s_patchout_t, s_patchout_f=s_patchout_f)
     model = fix_embedding_layer(model)
     model = lighten_model(model)
     print(model)
+
+    if checkpoint:
+        state_dict = torch.load(checkpoint)["state_dict"]
+        model_state_dict = OrderedDict([(key[4:], value) for key, value in state_dict.items() if key.startswith("net.")])
+        delete = []
+        for key in model_state_dict.keys():
+            # head size may mismatch
+            if "head" in key:
+                delete.append(key)
+        for key in delete:
+            del model_state_dict[key]
+
+        missing_keys, unexpected_keys = model.load_state_dict(model_state_dict, strict=False)
+        print(f"{len(missing_keys)} missing keys: ", missing_keys)
+        print(f"{len(unexpected_keys)} unexpected keys: ", unexpected_keys)
+    else:
+        print("Not loading any checkpoint!!")
+
     return model
 
 

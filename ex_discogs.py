@@ -158,6 +158,9 @@ class M(Ba3lModule):
     def forward(self, x):
         return self.net(x)
 
+    def forward_until_block(self, x, n_block):
+        return self.net.forward_until_block(x, n_block=n_block)
+
     def mel_forward(self, x):
         # input is already mel_spec
         # old_shape = x.size()
