@@ -240,6 +240,17 @@ def add_configs(ex):
         }
 
     @ex.named_config
+    def mtt_inference():
+        'do mtt inference'
+
+        basedataset = dict(
+            predict_groundtruth = "mtt/groundtruth-all.pk",
+            base_dir = "/home/palonso/data/magnatagatune-melspectrograms/",
+            )
+        inference_output_dir = "embeddings/mtt"
+
+
+    @ex.named_config
     def dynamic_roll():
         # dynamically roll the spectrograms/waveforms
         # updates the dataset config

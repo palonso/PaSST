@@ -4,6 +4,8 @@ import matplotlib as mpl
 mpl.use('Agg')
 
 import os
+from collections import defaultdict
+from itertools import chain
 from pathlib import Path
 from datetime import datetime
 import sys
@@ -42,9 +44,9 @@ ex.datasets.training.iter(DataLoader, static_args=dict(worker_init_fn=worker_ini
                           num_workers=16, shuffle=None, dataset=CMD("/basedataset.get_train_set"),
                           sampler=CMD("/basedataset.get_ft_weighted_sampler"))
 
-get_validate_loader = ex.datasets.test.iter(DataLoader, static_args=dict(worker_init_fn=worker_init_fn),
+get_validate_loader = ex.datasets.val.iter(DataLoader, static_args=dict(worker_init_fn=worker_init_fn),
                                             validate=True, batch_size=20, num_workers=16,
-                                            dataset=CMD("/basedataset.get_test_set"))
+                                            dataset=CMD("/basedataset.get_val_set"))
 
 
 @ex.config
@@ -66,6 +68,7 @@ def default_conf():
             s_patchout_f=3,
             input_fdim=96,
             input_tdim=625,
+            use_swa=True,
         ),  # network config
         "mel": DynamicIngredient(
             "models.preprocess.model_ing",
@@ -85,7 +88,11 @@ def default_conf():
             fmax_aug_range=2000,
         )
     }
-    basedataset = DynamicIngredient("discogs.dataset.dataset", wavmix=1)
+    basedataset = DynamicIngredient(
+        "discogs.dataset.dataset",
+        wavmix=1,
+        clip_length=10,
+    )
     trainer = dict(
         max_epochs=130,
         gpus=1,
@@ -139,6 +146,7 @@ class M(Ba3lModule):
 
         self.use_mixup = self.config.use_mixup or False
         self.use_masking = self.config.use_masking or False
+        self.inference_output_dir = Path(self.config.inference_output_dir) or False
         self.mixup_alpha = self.config.mixup_alpha
 
         desc, sum_params, sum_non_zero = count_non_zero_params(self.net)
@@ -157,9 +165,6 @@ class M(Ba3lModule):
 
     def forward(self, x):
         return self.net(x)
-
-    def forward_until_block(self, x, n_block):
-        return self.net.forward_until_block(x, n_block=n_block)
 
     def mel_forward(self, x):
         # input is already mel_spec
@@ -229,8 +234,16 @@ class M(Ba3lModule):
         if self.mel:
             x = self.mel_forward(x)
 
-        y_hat, _ = self.forward(x)
-        return f, y_hat
+        logits, embeddings = self.forward(x)
+
+        results = {
+            "activations": torch.sigmoid(logits.detach()),
+            "logits": logits.detach(),
+            "embeddings": embeddings.detach(),
+            }
+        results = {k: v.cpu() for k, v in results.items()}
+        results["filename"] = f
+        return results
 
     def validation_step(self, batch, batch_idx):
         x, f, y = batch
@@ -309,6 +322,13 @@ class M(Ba3lModule):
     def configure_callbacks(self):
         return get_extra_checkpoint_callback() + get_extra_swa_callback()
 
+    def predict_dataloader(self):
+        from discogs.dataset import get_predict_set
+        return DataLoader(
+            get_predict_set(),
+            batch_size=20,
+            num_workers=16,
+            )
 
 @ex.command
 def get_dynamic_norm(model, dyn_norm=False):
@@ -437,6 +457,36 @@ def evaluate_only(_run, _config, _log, _rnd, _seed):
     res = trainer.validate(modul, val_dataloaders=val_loader)
     print("\n\n Validtaion:")
     print(res)
+
+@ex.command
+def extract_embeddings(_run, _config, _log, _rnd, _seed):
+
+    trainer = ex.get_trainer()
+    modul = M(ex)
+    modul.eval()
+
+    outputs = trainer.predict(modul)
+
+    filenames = list(chain.from_iterable([x['filename'] for x in outputs]))
+    print("n filenames:", len(filenames))
+    for output in ("activations", "logits", "embeddings"):
+        print("processing output", output)
+        out = np.vstack([x[output] for x in outputs])
+
+        print(f"n {output}:", len(out))
+
+        agg_out = defaultdict(list)
+        for o, f in zip(out, filenames):
+            agg_out[f].append(o)
+
+        agg_out = {k: np.array(o) for k, o in agg_out.items()}
+        sub_dir = "swa" if _config["models"]["net"]["use_swa"] else "not_swa"
+        output_path = Path(modul.inference_output_dir, sub_dir)
+
+        for k, v in agg_out.items():
+            file_path = output_path / (k + f".{output}")
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            np.save(file_path, v)
 
 @ex.command
 def compute_norm_stats(_run, _config, _log, _rnd, _seed):

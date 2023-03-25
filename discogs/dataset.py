@@ -34,6 +34,7 @@ def default_config():
 
     eval_groundtruth = "discogs/gt_val_all_400l_clean.pk"
     train_groundtruth = "discogs/gt_train_all_400l_clean.pk"
+    predict_groundtruth = "discogs/gt_train_all_400l_clean.pk"
     num_of_classes = 400
 
 
@@ -88,28 +89,28 @@ class DiscogsDataset(TorchDataset):
 
         return melspectrogram, filename, target
 
-    def load_melspectrogram(self, melspectrogram_file: pathlib.Path):
+    def load_melspectrogram(self, melspectrogram_file: pathlib.Path, offset: int= None):
         frames_num = melspectrogram_file.stat().st_size // (2 * self.n_bands)  # each float16 has 2 bytes
-        frames_to_read = min(self.melspectrogram_size, frames_num)
-        max_frame = frames_num - self.melspectrogram_size
-        min_frame = 0
 
-        if max_frame < min_frame:
+        if not offset:
             max_frame = frames_num - self.melspectrogram_size
-            min_frame = 0
-        offset_idx = random.randint(min_frame, max_frame)
+            offset = random.randint(0, max_frame)
 
         # offset: idx * bands * bytes per float
-        offset = offset_idx * self.n_bands * 2
+        offset_bytes = offset * self.n_bands * 2
+    
+        skip_frames = max(offset + self.melspectrogram_size - frames_num, 0)
+        frames_to_read = self.melspectrogram_size - skip_frames
+
         fp = np.memmap(melspectrogram_file, dtype='float16', mode='r',
-                       shape=(frames_to_read, self.n_bands), offset=offset)
+                       shape=(frames_to_read, self.n_bands), offset=offset_bytes)
 
         # put the data in a numpy ndarray
         melspectrogram = np.array(fp, dtype='float16')
 
         if frames_to_read < self.melspectrogram_size:
             padding_size = self.melspectrogram_size - frames_to_read
-            melspectrogram = np.vstack([melspectrogram, np.zeros([padding_size, self.n_bands])])
+            melspectrogram = np.vstack([melspectrogram, np.zeros([padding_size, self.n_bands], dtype="float16")])
             melspectrogram = np.roll(melspectrogram, padding_size // 2, axis=0)  # center the padding
 
         del fp
@@ -120,7 +121,67 @@ class DiscogsDataset(TorchDataset):
 
         return melspectrogram
 
+class ExhaustiveInferenceDataset(DiscogsDataset):
+    def __init__(
+        self,
+        groundtruth_file,
+        base_dir="",
+        sample_rate=16000,
+        clip_length=10,
+        augment=False,
+        hop_size=256,
+        n_bands=96,
+        half_overlap=True,
+    ):
+        """
+        Reads the mel spectrogram chunks with numpy and returns a fixed length mel-spectrogram patch
+        """
+        super().__init__(
+            groundtruth_file,
+            base_dir=base_dir,
+            sample_rate=sample_rate,
+            classes_num=None,
+            clip_length=clip_length,
+            augment=augment,
+            hop_size=hop_size,
+            n_bands=n_bands,
+        )
+        self.hop_size = self.melspectrogram_size // 2 if half_overlap else self.melspectrogram_size
+        self.half_overlap = half_overlap
 
+        filenames = []
+        for filename in self.filenames.values():
+            melspectrogram_file = pathlib.Path(self.base_dir, filename)
+            frames_num = melspectrogram_file.stat().st_size // (2 * self.n_bands)  # each float16 has 2 bytes
+            if self.half_overlap:
+                frames_num -= self.hop_size
+
+            # allow 10% margin with zero-pad
+            n_patches = int((frames_num * 1.1) // self.hop_size)
+            # filenames is a tuple (filename, offset)
+            filenames.extend([(filename, i * self.melspectrogram_size) for i in range(n_patches)])
+
+        self.filenames_with_patch = dict(zip(range(len(filenames)), filenames))
+        self.length = len(self.filenames_with_patch)
+
+
+    def __getitem__(self, index):
+        """Load waveform and target of an audio clip.
+
+        Args:
+          index: int
+        Returns:
+          data_dict: {
+            'melspectrogram': (bands, timestamps,),
+            'filename_name': (str, offset),
+        """
+
+        filename, offset = self.filenames_with_patch[index]
+
+        melspectrogram_file = pathlib.Path(self.base_dir, filename)
+        melspectrogram = self.load_melspectrogram(melspectrogram_file, offset)
+
+        return melspectrogram, filename, np.array([], dtype="float16")
 # @dataset.command
 # def get_train_set(train_groundtruth):
 #     ds = DiscogsDataset(train_groundtruth, augment=True)
@@ -183,7 +244,7 @@ def get_base_train_set(train_groundtruth, base_dir, clip_length):
 
 
 @dataset.command
-def get_base_test_set(eval_groundtruth, base_dir, eval_base_dir, clip_length):
+def get_base_val_set(eval_groundtruth, base_dir, eval_base_dir, clip_length):
     if eval_base_dir:
         ds = DiscogsDataset(eval_groundtruth, eval_base_dir, clip_length=clip_length)
     else:
@@ -191,6 +252,15 @@ def get_base_test_set(eval_groundtruth, base_dir, eval_base_dir, clip_length):
 
     return ds
 
+@dataset.command
+def get_base_test_set(test_groundtruth, base_dir, clip_length):
+    ds = ExhaustiveInferenceDataset(test_groundtruth, base_dir, clip_length=clip_length)
+    return ds
+
+@dataset.command
+def get_base_predict_set(predict_groundtruth, base_dir, clip_length):
+    ds = ExhaustiveInferenceDataset(predict_groundtruth, base_dir, clip_length=clip_length)
+    return ds
 
 @dataset.command(prefix='roll_conf')
 def get_roll_func(axis=-1, shift=None, shift_range=50):
@@ -236,10 +306,24 @@ def get_train_set(normalize, roll, wavmix=False):
     return ds
 
 
+@dataset.command
+def get_val_set(normalize):
+    ds = get_base_val_set()
+    if normalize:
+        ds = PreprocessDataset(ds, get_norm_func())
+    return ds
+
 
 @dataset.command
 def get_test_set(normalize):
     ds = get_base_test_set()
+    if normalize:
+        ds = PreprocessDataset(ds, get_norm_func())
+    return ds
+
+@dataset.command
+def get_predict_set(normalize):
+    ds = get_base_predict_set()
     if normalize:
         ds = PreprocessDataset(ds, get_norm_func())
     return ds
