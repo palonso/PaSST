@@ -357,8 +357,6 @@ def main(_run, _config, _log, _rnd, _seed):
         val_dataloaders=val_loader,
     )
 
-    torch.save(modul.net_swa, save_dir)
-
     return {"done": True}
 
 
