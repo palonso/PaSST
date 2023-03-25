@@ -66,7 +66,7 @@ def add_configs(ex):
         'use PaSST model pretrained on Audioset (with SWA) ap=476; time encodings for up to 30 seconds'
         # python ex_audioset.py evaluate_only with passt_s_ap476
         models = {
-            "net": DynamicIngredient("models.passt.model_ing", input_tdim=1875, s_patchout_y=90)
+            "net": DynamicIngredient("models.passt.model_ing", input_tdim=1875, s_patchout_t=90)
         }
         basedataset = dict(clip_length=30)
 
