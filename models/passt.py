@@ -1019,6 +1019,7 @@ def get_model(
     s_patchout_t=0,
     s_patchout_f=0,
     checkpoint="",
+    use_swa=True,
 ):
     """
     :param arch: Base ViT or Deit architecture
@@ -1073,11 +1074,12 @@ def get_model(
                        s_patchout_t=s_patchout_t, s_patchout_f=s_patchout_f)
     model = fix_embedding_layer(model)
     model = lighten_model(model)
-    print(model)
+    # print(model)
 
+    weight_prefix = "net_swa." if use_swa else "net."
     if checkpoint:
         state_dict = torch.load(checkpoint)["state_dict"]
-        model_state_dict = OrderedDict([(key[4:], value) for key, value in state_dict.items() if key.startswith("net.")])
+        model_state_dict = OrderedDict([(key[len(weight_prefix):], value) for key, value in state_dict.items() if key.startswith(weight_prefix)])
         delete = []
         for key in model_state_dict.keys():
             # head size may mismatch
