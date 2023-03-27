@@ -240,15 +240,23 @@ def add_configs(ex):
         }
 
     @ex.named_config
-    def mtt_inference():
+    def  passt_discogs30sec_inference():
         'do mtt inference'
 
-        basedataset = dict(
-            predict_groundtruth = "mtt/groundtruth-all.pk",
-            base_dir = "/home/palonso/data/magnatagatune-melspectrograms/",
-            )
-        inference_output_dir = "embeddings/mtt"
+        inference = dict(
+            out_dir = "embeddings/mtt",
+            n_block = 11,
+        )
 
+        models = {
+            "net": DynamicIngredient(
+                "models.passt.model_ing",
+                arch="passt_s_swa_p16_128_ap476_discogs",
+                # checkpoint="output/discogs/230325-141455/discogs/ec14e4ef8b104814aa5ec985803bb9d8/checkpoints/epoch=46-step=195848.ckpt",
+                checkpoint="output/discogs/230325-141455/discogs/ec14e4ef8b104814aa5ec985803bb9d8/checkpoints/epoch=66-step=279188.ckpt",
+                use_swa = True,
+            )
+        }
 
     @ex.named_config
     def dynamic_roll():
