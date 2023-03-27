@@ -146,7 +146,6 @@ class M(Ba3lModule):
 
         self.use_mixup = self.config.use_mixup or False
         self.use_masking = self.config.use_masking or False
-        self.inference_output_dir = Path(self.config.inference_output_dir) or False
         self.mixup_alpha = self.config.mixup_alpha
 
         desc, sum_params, sum_non_zero = count_non_zero_params(self.net)
@@ -234,13 +233,14 @@ class M(Ba3lModule):
         if self.mel:
             x = self.mel_forward(x)
 
-        logits, embeddings = self.forward(x)
+        embeddings = self.net.forward_until_block(
+            x,
+            n_block=self.config.inference.n_block,
+            return_self_attention=False,
+            compact_features=True,
+        )
 
-        results = {
-            "activations": torch.sigmoid(logits.detach()),
-            "logits": logits.detach(),
-            "embeddings": embeddings.detach(),
-            }
+        results = {"embeddings": embeddings.detach()}
         results = {k: v.cpu() for k, v in results.items()}
         results["filename"] = f
         return results
@@ -469,7 +469,7 @@ def extract_embeddings(_run, _config, _log, _rnd, _seed):
 
     filenames = list(chain.from_iterable([x['filename'] for x in outputs]))
     print("n filenames:", len(filenames))
-    for output in ("activations", "logits", "embeddings"):
+    for output in ["embeddings"]:
         print("processing output", output)
         out = np.vstack([x[output] for x in outputs])
 
@@ -480,11 +480,13 @@ def extract_embeddings(_run, _config, _log, _rnd, _seed):
             agg_out[f].append(o)
 
         agg_out = {k: np.array(o) for k, o in agg_out.items()}
-        sub_dir = "swa" if _config["models"]["net"]["use_swa"] else "not_swa"
-        output_path = Path(modul.inference_output_dir, sub_dir)
+        subdir1 = str(_config["basedataset"]["clip_length"]) + "sec"
+        subdir2 = "swa" if _config["models"]["net"]["use_swa"] else "no_swa"
+        subdir3 = str(_config["inference"]["n_block"])
+        out_dir = Path(_config["inference"]["out_dir"]) / subdir1 / subdir2 / subdir3
 
         for k, v in agg_out.items():
-            file_path = output_path / (k + f".{output}")
+            file_path = out_dir / (k + f".{output}")
             file_path.parent.mkdir(parents=True, exist_ok=True)
             np.save(file_path, v)
 
