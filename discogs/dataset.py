@@ -92,7 +92,7 @@ class DiscogsDataset(TorchDataset):
     def load_melspectrogram(self, melspectrogram_file: pathlib.Path, offset: int= None):
         frames_num = melspectrogram_file.stat().st_size // (2 * self.n_bands)  # each float16 has 2 bytes
 
-        if not offset:
+        if type(offset) is not int:
             max_frame = frames_num - self.melspectrogram_size
             offset = random.randint(0, max_frame)
 
