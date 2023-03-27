@@ -484,12 +484,13 @@ class PaSST(nn.Module):
         if self.num_tokens == 2:
             self.head_dist = nn.Linear(self.embed_dim, self.num_classes) if num_classes > 0 else nn.Identity()
 
-    def forward_until_block(self, x, n_block=-1):
+    def forward_until_block(self, x, n_block=-1, return_self_attention=False, compact_features=True):
+        global first_RUN  # not jit friendly? use trace instead
         x = self.patch_embed(x)  # [b, e, f, t]
         B_dim, E_dim, F_dim, T_dim = x.shape  # slow
-        # if first_RUN: print(" patch_embed : ", x.shape)
+        if first_RUN: print(" patch_embed : ", x.shape)
         # Adding Time/Freq information
-        # if first_RUN: print(" self.time_new_pos_embed.shape", self.time_new_pos_embed.shape)
+        if first_RUN: print(" self.time_new_pos_embed.shape", self.time_new_pos_embed.shape)
         time_new_pos_embed = self.time_new_pos_embed
         if x.shape[-1] < time_new_pos_embed.shape[-1]:
             time_new_pos_embed = time_new_pos_embed[:, :, :, :x.shape[-1]]
@@ -498,33 +499,42 @@ class PaSST(nn.Module):
                 f"the patches shape:{x.shape} are larger than the expected time encodings {time_new_pos_embed.shape}, x will be cut")
             x = x[:, :, :, :time_new_pos_embed.shape[-1]]
         x = x + time_new_pos_embed
-        # if first_RUN: print(" self.freq_new_pos_embed.shape", self.freq_new_pos_embed.shape)
+        if first_RUN: print(" self.freq_new_pos_embed.shape", self.freq_new_pos_embed.shape)
         x = x + self.freq_new_pos_embed
 
         ###
         # Flatten the sequence
         x = x.flatten(2).transpose(1, 2)
         # Unstructured Patchout
-        # if first_RUN: print("X flattened", x.size())
+        if first_RUN: print("X flattened", x.size())
         # Add the C/D tokens
         cls_tokens = self.cls_token.expand(B_dim, -1, -1) + self.new_pos_embed[:, :1, :]
         if self.dist_token is None:
             x = torch.cat((cls_tokens, x), dim=1)
         else:
             dist_token = self.dist_token.expand(B_dim, -1, -1) + self.new_pos_embed[:, 1:, :]
-            # if first_RUN: print(" self.dist_token.shape", dist_token.shape)
+            if first_RUN: print(" self.dist_token.shape", dist_token.shape)
             x = torch.cat((cls_tokens, dist_token, x), dim=1)
 
-        # if first_RUN: print(" final sequence x", x.shape)
+        if first_RUN: print(" final sequence x", x.shape)
         x = self.pos_drop(x)
         for i, block in enumerate(self.blocks):
             if i == n_block:
-                x = block(x, return_self_attention=True)
-                # print(f"returning self-attention from block {i}")
-                return x
+                if first_RUN: print(f"returning self-attention from block {i}")
+
+                x = block(x, return_self_attention=return_self_attention)
+                break
             else:
                 x = block(x)
-        # print("return last block")
+
+        if compact_features:
+            cls = x[:, 0, :]
+            dist = x[:, 1, :]
+            feats = torch.mean(x[:,2:,:], dim=1)
+            first_RUN = False
+            return torch.cat([cls, dist, feats], dim=1)
+
+        first_RUN = False
         return x
 
     def forward_features(self, x):
@@ -615,7 +625,6 @@ class PaSST(nn.Module):
             if first_RUN: print("forward_features", features.size())
             x = self.head(x)
         if first_RUN: print("head", x.size())
-        first_RUN = False
         return x, features
 
 
