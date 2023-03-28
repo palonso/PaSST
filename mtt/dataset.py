@@ -100,7 +100,7 @@ class MTTDataset(TorchDataset):
     def load_melspectrogram(self, melspectrogram_file: pathlib.Path, offset: int= None):
         frames_num = melspectrogram_file.stat().st_size // (2 * self.n_bands)  # each float16 has 2 bytes
 
-        if not offset:
+        if type(offset) is not int:
             max_frame = frames_num - self.melspectrogram_size
             offset = random.randint(0, max_frame)
 
@@ -141,6 +141,7 @@ class MTTDatasetExhaustive(MTTDataset):
         augment=False,
         hop_size=256,
         n_bands=96,
+        half_overlap=True,
     ):
         """
         Reads the mel spectrogram chunks with numpy and returns a fixed length mel-spectrogram patch
@@ -156,14 +157,20 @@ class MTTDatasetExhaustive(MTTDataset):
             n_bands=n_bands,
         )
 
+        self.hop_size = self.melspectrogram_size // 2 if half_overlap else self.melspectrogram_size
+        self.half_overlap = half_overlap
+
         filenames = []
         for filename in self.filenames.values():
             melspectrogram_file = pathlib.Path(self.base_dir, filename)
             frames_num = melspectrogram_file.stat().st_size // (2 * self.n_bands)  # each float16 has 2 bytes
-            # do a last patch up to 20% zero-pad
-            n_patches = int((frames_num * 1.2) // self.melspectrogram_size)
+            if self.half_overlap:
+                frames_num -= self.hop_size
+
+            # allow 10% margin with zero-pad
+            n_patches = int((frames_num * 1.1) // self.hop_size)
             # filenames is a tuple (filename, offset)
-            filenames.extend([(filename, i * self.melspectrogram_size) for i in range(n_patches)])
+            filenames.extend([(filename, i * self.hop_size) for i in range(n_patches)])
 
         self.filenames_with_patch = dict(zip(range(len(filenames)), filenames))
         self.length = len(self.filenames_with_patch)
