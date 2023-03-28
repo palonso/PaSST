@@ -103,20 +103,21 @@ def default_conf():
         num_sanity_val_steps=0,
         reload_dataloaders_every_epoch=True
     )
-    lr = 3e-5 # learning rate
-    lr_mult = 0.9
+    lr = 1e-4 # learning rate
+    lr_mult = 0.3
     use_mixup = False
     use_masking = True
     freq_masks = 10
     time_masks = 20
     mixup_alpha = 0.3
 
-    schedule_mode = "cos_cyc"
+    schedule_mode = "exp_lin"
     warm_up_len = 5
     cycle_len = 5
-    ramp_down_start = 20
-    last_lr_value = 0.01
-    weight_decay= 0.01
+    ramp_down_start = 10
+    ramp_down_len = 10
+    last_lr_value = 1e-7
+    weight_decay= 0.001
 
 # register extra possible configs
 add_configs(ex)
@@ -209,11 +210,6 @@ class M(Ba3lModule):
         if self.use_masking:
             x = self.masking.compute(x)
 
-        for i in range(len(x)):
-            if not Path(f"example{i}.png").exists():
-                patch = x[i].detach().cpu().numpy().squeeze()
-                plt.matshow(patch, aspect="auto")
-                plt.savefig(f"example{i}.png")
 
         y_hat, embed = self.forward(x)
 
