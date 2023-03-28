@@ -53,6 +53,15 @@ def add_configs(ex):
         basedataset = dict(clip_length=20)
 
     @ex.named_config
+    def passt_discogs_10sec():
+        'use PaSST model pretrained on Audioset (with SWA) ap=476; time encodings for up to 20 seconds'
+        # python ex_audioset.py evaluate_only with passt_s_ap476
+        models = {
+            "net": DynamicIngredient("models.passt.model_ing", input_tdim=625, s_patchout_t=30, n_patches_t=87)
+        }
+        basedataset = dict(clip_length=10)
+    
+    @ex.named_config
     def passt_discogs_20sec():
         'use PaSST model pretrained on Audioset (with SWA) ap=476; time encodings for up to 20 seconds'
         # python ex_audioset.py evaluate_only with passt_s_ap476
@@ -240,8 +249,43 @@ def add_configs(ex):
         }
 
     @ex.named_config
+    def  passt_discogs10sec_inference():
+        'extract embeddings 10secs'
+
+        inference = dict(
+            out_dir = "embeddings/mtt",
+            n_block = 11,
+        )
+
+        models = {
+            "net": DynamicIngredient(
+                "models.passt.model_ing",
+                arch="passt_s_swa_p16_128_ap476_discogs",
+                checkpoint="output/discogs/945693489efb439996d141b35a2ec63d/checkpoints/epoch=129-step=541709.ckpt",
+                use_swa = True,
+            )
+        }
+    @ex.named_config
+
+    def  passt_discogs20sec_inference():
+        'extract embeddings 20secs'
+
+        inference = dict(
+            out_dir = "embeddings/mtt",
+            n_block = 11,
+        )
+
+        models = {
+            "net": DynamicIngredient(
+                "models.passt.model_ing",
+                arch="passt_s_swa_p16_128_ap476_discogs",
+                checkpoint="output/discogs/230323-020758/discogs/d42e938b9d2d4d389c555c2f508fe277/checkpoints/epoch=129-step=541709.ckpt",
+                use_swa = True,
+            )
+        }
+    @ex.named_config
     def  passt_discogs30sec_inference():
-        'do mtt inference'
+        'extract embeddings 30s'
 
         inference = dict(
             out_dir = "embeddings/mtt",
@@ -253,7 +297,8 @@ def add_configs(ex):
                 "models.passt.model_ing",
                 arch="passt_s_swa_p16_128_ap476_discogs",
                 # checkpoint="output/discogs/230325-141455/discogs/ec14e4ef8b104814aa5ec985803bb9d8/checkpoints/epoch=46-step=195848.ckpt",
-                checkpoint="output/discogs/230325-141455/discogs/ec14e4ef8b104814aa5ec985803bb9d8/checkpoints/epoch=66-step=279188.ckpt",
+                # checkpoint="output/discogs/230325-141455/discogs/ec14e4ef8b104814aa5ec985803bb9d8/checkpoints/epoch=66-step=279188.ckpt",
+                checkpoint="output/discogs/230325-141455/discogs/ec14e4ef8b104814aa5ec985803bb9d8/checkpoints/epoch=90-step=379196.ckpt",
                 use_swa = True,
             )
         }
