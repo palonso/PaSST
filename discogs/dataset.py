@@ -159,7 +159,7 @@ class ExhaustiveInferenceDataset(DiscogsDataset):
             # allow 10% margin with zero-pad
             n_patches = int((frames_num * 1.1) // self.hop_size)
             # filenames is a tuple (filename, offset)
-            filenames.extend([(filename, i * self.melspectrogram_size) for i in range(n_patches)])
+            filenames.extend([(filename, i * self.hop_size) for i in range(n_patches)])
 
         self.filenames_with_patch = dict(zip(range(len(filenames)), filenames))
         self.length = len(self.filenames_with_patch)
@@ -182,6 +182,7 @@ class ExhaustiveInferenceDataset(DiscogsDataset):
         melspectrogram = self.load_melspectrogram(melspectrogram_file, offset)
 
         return melspectrogram, filename, np.array([], dtype="float16")
+
 # @dataset.command
 # def get_train_set(train_groundtruth):
 #     ds = DiscogsDataset(train_groundtruth, augment=True)
