@@ -9,6 +9,7 @@ import os
 import sys
 from collections import defaultdict
 from itertools import chain
+from datetime import datetime
 from pathlib import Path
 
 import torch
@@ -44,15 +45,15 @@ ex = Experiment("mtt")
 # DDP=2 python ex_mtt.py with trainer.precision=16  models.net.arch=passt_deit_bd_p16_384 -p -m mongodb_server:27000:mtt -c "PaSST base 2 GPU"
 
 # define datasets and loaders
-ex.datasets.training.iter(DataLoader, static_args=dict(worker_init_fn=worker_init_fn), train=True, batch_size=12,
+ex.datasets.training.iter(DataLoader, static_args=dict(worker_init_fn=worker_init_fn), train=True, batch_size=28,
                           num_workers=16, shuffle=None, dataset=CMD("/basedataset.get_train_set"))
 
 get_validate_loader = ex.datasets.val.iter(DataLoader, static_args=dict(worker_init_fn=worker_init_fn),
-                                            validate=True, batch_size=20, num_workers=16,
+                                            validate=True, batch_size=32, num_workers=16,
                                             dataset=CMD("/basedataset.get_val_set"))
 
 get_test_loader = ex.datasets.test.iter(DataLoader, static_args=dict(worker_init_fn=worker_init_fn),
-                                        validate=True, batch_size=20, num_workers=16,
+                                        validate=True, batch_size=32, num_workers=16,
                                         dataset=CMD("/basedataset.get_test_set"))
 
 @ex.config
@@ -74,7 +75,8 @@ def default_conf():
             s_patchout_f=0,
             input_fdim=96,
             input_tdim=625,
-            checkpoint="/home/palonso/reps/PaSST/output/discogs/945693489efb439996d141b35a2ec63d/checkpoints/epoch=45-step=191681.ckpt"
+            checkpoint="",
+            remove_n_blocks=0,
         ),  # network config
         "mel": DynamicIngredient(
             "models.preprocess.model_ing",
@@ -115,9 +117,10 @@ def default_conf():
     warm_up_len = 5
     cycle_len = 5
     ramp_down_start = 10
-    ramp_down_len = 10
+    ramp_down_len = 30
     last_lr_value = 1e-7
-    weight_decay= 0.001
+    weight_decay=  0.0001
+    timestamp = datetime.now().strftime("%y%m%d-%H%M%S")
 
 # register extra possible configs
 add_configs(ex)
@@ -162,7 +165,7 @@ class M(Ba3lModule):
         self.experiment.info["start_sum_params"] = sum_params
         self.experiment.info["start_sum_params_non_zero"] = sum_non_zero
 
-        # in case we need embedings for the DA
+        # in case we need embeddings for the DA
         self.net.return_embed = True
         self.dyn_norm = self.config.dyn_norm
         self.do_swa = False
@@ -224,16 +227,18 @@ class M(Ba3lModule):
             loss = samples_loss.mean()
             samples_loss = samples_loss.detach()
 
-        results = {"loss": loss, }
+        self.log("train_loss", loss, on_epoch=True)
 
-        return results
+        return loss
 
-    def training_epoch_end(self, outputs):
-        avg_loss = torch.stack([x['loss'] for x in outputs]).mean()
+    # def training_epoch_end(self, outputs):
+    #     avg_loss = torch.stack([x['loss'] for x in outputs]).mean()
 
-        logs = {'train.loss': avg_loss, 'step': self.current_epoch}
+    #     logs = {'train_loss': avg_loss,
+    #             # 'step': self.current_epoch
+    #         }
 
-        self.log_dict(logs, sync_dist=True)
+        # self.log_dict(logs, sync_dist=True)
 
     def predict(self, batch, batch_idx: int, dataloader_idx: int = None):
         x, f, y = batch
@@ -260,6 +265,8 @@ class M(Ba3lModule):
             # self.log("validation.loss", loss, prog_bar=True, on_epoch=True, on_step=False)
             results = {**results, net_name + "val_loss": loss, net_name + "out": out, net_name + "target": y.detach()}
         results = {k: v.cpu() for k, v in results.items()}
+        self.log("val_loss", results["val_loss"], prog_bar=True)
+
         return results
 
     def validation_epoch_end(self, outputs):
@@ -281,13 +288,15 @@ class M(Ba3lModule):
                     roc = metrics.roc_auc_score(target.numpy(), out.numpy(), average=None)
                 except ValueError:
                     roc = np.array([np.nan] * self.net.n_classes)
-                logs = {net_name + 'val.loss': torch.as_tensor(avg_loss).cuda(),
-                        net_name + 'ap': torch.as_tensor(average_precision.mean()).cuda(),
-                        net_name + 'roc': torch.as_tensor(roc.mean()).cuda(),
-                        'step': torch.as_tensor(self.current_epoch).cuda()}
+                logs = {net_name + 'val_loss': torch.as_tensor(avg_loss).cuda(),
+                        net_name + 'val_ap': torch.as_tensor(average_precision.mean()).cuda(),
+                        net_name + 'val_roc': torch.as_tensor(roc.mean()).cuda(),
+                        # 'step': torch.as_tensor(self.current_epoch).cuda()\
+                    }
                 # torch.save(average_precision, f"ap_perclass_{average_precision.mean()}.pt")
                 # print(average_precision)
-                self.log_dict(logs, sync_dist=True)
+                self.log_dict(logs, sync_dist=True, on_epoch=True)
+
             if self.distributed_mode:
                 allout = self.all_gather(out)
                 alltarget = self.all_gather(target)
@@ -298,11 +307,11 @@ class M(Ba3lModule):
                 roc = metrics.roc_auc_score(alltarget, allout, average=None)
                 if self.trainer.is_global_zero:
                     logs = {
-                        net_name + "ap": torch.as_tensor(average_precision.mean()).cuda(),
-                        net_name + "roc": torch.as_tensor(roc.mean()).cuda(),
-                        'step': torch.as_tensor(self.current_epoch).cuda()
+                        net_name + "val_ap": torch.as_tensor(average_precision.mean()).cuda(),
+                        net_name + "val_roc": torch.as_tensor(roc.mean()).cuda(),
+                        # 'step': torch.as_tensor(self.current_epoch).cuda()
                     }
-                    self.log_dict(logs, sync_dist=False)
+                    self.log_dict(logs, sync_dist=True, on_epoch=True)
             # else:
             #     self.log_dict({net_name + "ap": logs[net_name + 'ap'], 'step': logs['step']}, sync_dist=True)
 
@@ -320,7 +329,7 @@ class M(Ba3lModule):
             out = torch.sigmoid(y_hat.detach())
             results = {
                 **results,
-                net_name + "test.loss": loss,
+                net_name + "test_loss": loss,
                 net_name + "out": out,
                 net_name + "target": y.detach(),
                 }
@@ -334,7 +343,7 @@ class M(Ba3lModule):
         if self.do_swa:
             model_name = model_name + [("swa_", self.net_swa)]
         for net_name, net in model_name:
-            avg_loss = torch.stack([x[net_name + 'test.loss'] for x in outputs]).mean()
+            avg_loss = torch.stack([x[net_name + 'test_loss'] for x in outputs]).mean()
             out = torch.cat([x[net_name + 'out'] for x in outputs], dim=0)
             target = torch.cat([x[net_name + 'target'] for x in outputs], dim=0)
             filenames = list(chain.from_iterable([x[net_name + 'filename'] for x in outputs]))
@@ -357,10 +366,11 @@ class M(Ba3lModule):
                 roc = metrics.roc_auc_score(agg_target, agg_out, average=None)
             except ValueError:
                 roc = np.array([np.nan] * self.net.n_classes)
-            logs = {net_name + 'test.loss': torch.as_tensor(avg_loss).cuda(),
-                    net_name + 'test.ap': torch.as_tensor(average_precision.mean()).cuda(),
-                    net_name + 'test.roc': torch.as_tensor(roc.mean()).cuda(),
-                    'step': torch.as_tensor(self.current_epoch).cuda()}
+            logs = {net_name + 'test_loss': torch.as_tensor(avg_loss).cuda(),
+                    net_name + 'test_ap': torch.as_tensor(average_precision.mean()).cuda(),
+                    net_name + 'test_roc': torch.as_tensor(roc.mean()).cuda(),
+                    # 'step': torch.as_tensor(self.current_epoch).cuda()
+            }
             self.log_dict(logs, sync_dist=True)
 
     def configure_optimizers(self):
@@ -380,7 +390,8 @@ class M(Ba3lModule):
 
         parameters = []
         # store params & learning rates
-        next_block = "blocks.11"
+        nb = 11 - self.config.models.net.remove_n_blocks
+        next_block = f"blocks.{nb}"
         for idx, name in enumerate(layer_names):
             # update learning rate
             if name.startswith(next_block):
@@ -416,9 +427,17 @@ def get_dynamic_norm(model, dyn_norm=False):
 
 @ex.command
 def get_extra_checkpoint_callback(save_last_n=None):
-    if save_last_n is None:
-        return []
-    return [ModelCheckpoint(monitor="step", verbose=True, save_top_k=save_last_n, mode='max')]
+    # if save_last_n is None:
+    #     return []
+    return [ModelCheckpoint(
+        filename="max_roc",
+        save_top_k=1,
+        monitor="val_roc",
+        mode='max',
+        save_weights_only=True,
+        verbose=True,
+        every_n_train_steps=0,
+    )]
 
 
 @ex.command
@@ -439,9 +458,11 @@ def main(_run, _config, _log, _rnd, _seed):
 
     modul = M(ex)
 
+    project_name = _config["basedataset"]["name"]
     comet_logger = CometLogger(
-        project_name=_config["basedataset"]["name"],
+        project_name=project_name,
         api_key=os.environ["COMET_API_KEY"],
+        save_dir = Path("output", project_name, _config["timestamp"])
         )
     trainer.logger = comet_logger
     comet_logger.log_hyperparams(_config)
@@ -455,7 +476,7 @@ def main(_run, _config, _log, _rnd, _seed):
     trainer.test(
         model=modul,
         test_dataloaders=val_loaders["test"],
-        ckpt_path="best",
+        ckpt_path="max_roc",
     )
 
     return {"done": True}
