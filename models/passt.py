@@ -990,9 +990,9 @@ def fix_embedding_layer(model, embed="default"):
     return model
 
 @model_ing.command
-def lighten_model(model, cut_depth=0):
-    if cut_depth == 0:
-        return model
+def lighten_model(model, cut_depth=0, remove_n_blocks=0):
+    # if cut_depth == 0:
+    #     return model
     if cut_depth:
         if cut_depth < 0:
             print(f"\n Reducing model depth by removing every  {-cut_depth} layer \n\n")
@@ -1010,7 +1010,17 @@ def lighten_model(model, cut_depth=0):
         else:
             old_blocks = [old_blocks[0]] + old_blocks[cut_depth + 1:]
         model.blocks = nn.Sequential(*old_blocks)
-        print(f"\n Atfer Cutting it is  {len(model.blocks)} \n\n")
+
+        print(f"\n After Cutting it is  {len(model.blocks)} \n\n")
+
+    if remove_n_blocks:
+        old_blocks = list(model.blocks.children())
+        if remove_n_blocks:
+            old_blocks = old_blocks[:len(old_blocks) - remove_n_blocks]
+        model.blocks = nn.Sequential(*old_blocks)
+
+        print(f"\n After Cutting it is  {len(model.blocks)} \n\n")
+
     return model
 
 
