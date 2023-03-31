@@ -482,6 +482,16 @@ def extract_embeddings(_run, _config, _log, _rnd, _seed):
         agg_out = {k: np.array(o) for k, o in agg_out.items()}
         subdir1 = str(_config["basedataset"]["clip_length"]) + "sec"
         subdir2 = "swa" if _config["models"]["net"]["use_swa"] else "no_swa"
+        if _config["models"]["net"]["s_patchout_f_indices"]:
+            removed_bands = "_".join(np.array(_config["models"]["net"]["s_patchout_f_indices"]).astype("str"))
+            subdir2 += f"_patchout_f_indices" + removed_bands
+        if _config["models"]["net"]["s_patchout_t_indices"]:
+            removed_bands = "_".join(np.array(_config["models"]["net"]["s_patchout_t_indices"]).astype("str"))
+            subdir2 += f"_patchout_f_forced_" + removed_bands
+        if _config["models"]["net"]["s_patchout_f_interleaved"]:
+            subdir2 += f"_patchout_f_interleaved" + str(_config["models"]["net"]["s_patchout_f_interleaved"])
+        if _config["models"]["net"]["s_patchout_t_interleaved"]:
+            subdir2 += f"_patchout_t_interleaved" + str(_config["models"]["net"]["s_patchout_t_interleaved"])
         subdir3 = str(_config["inference"]["n_block"])
         out_dir = Path(_config["inference"]["out_dir"]) / subdir1 / subdir2 / subdir3
 
