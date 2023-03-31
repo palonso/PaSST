@@ -369,8 +369,9 @@ class PaSST(nn.Module):
 
     """
 
-    def __init__(self, u_patchout=0, s_patchout_t=0, s_patchout_f=0, img_size=(128, 998), patch_size=16, stride=16,
-                 in_chans=1, num_classes=527, embed_dim=768, depth=12,
+    def __init__(self, u_patchout=0, s_patchout_t=0, s_patchout_f=0, s_patchout_f_indices=[],
+                 s_patchout_f_interleaved=0, s_patchout_t_indices=[], s_patchout_t_interleaved=0,
+                 img_size=(128, 998), patch_size=16, stride=16, in_chans=1, num_classes=527, embed_dim=768, depth=12,
                  num_heads=12, mlp_ratio=4., qkv_bias=True, representation_size=None, distilled=False,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0., embed_layer=PatchEmbed, norm_layer=None,
                  act_layer=None, weight_init=''):
@@ -402,6 +403,10 @@ class PaSST(nn.Module):
         self.u_patchout = u_patchout
         self.s_patchout_t = s_patchout_t
         self.s_patchout_f = s_patchout_f
+        self.s_patchout_f_indices = s_patchout_f_indices
+        self.s_patchout_f_interleaved = s_patchout_f_interleaved
+        self.s_patchout_t_indices = s_patchout_t_indices
+        self.s_patchout_t_interleaved = s_patchout_t_interleaved
         self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
         self.num_tokens = 2 if distilled else 1
         norm_layer = norm_layer or partial(nn.LayerNorm, eps=1e-6)
@@ -501,6 +506,42 @@ class PaSST(nn.Module):
         x = x + time_new_pos_embed
         if first_RUN: print(" self.freq_new_pos_embed.shape", self.freq_new_pos_embed.shape)
         x = x + self.freq_new_pos_embed
+
+        if self.s_patchout_f_indices:
+            if first_RUN: print(f"WARNING!! Applying freq patchout indices on feature extraction ")
+            if first_RUN: print(f"X Before Freq Patchout of bands {self.s_patchout_f_indices} ", x.size())
+
+            kept_indices = torch.arange(F_dim)
+            for i in self.s_patchout_f_indices:
+                kept_indices = kept_indices[kept_indices!=int(i)]
+            x = x[:, :, kept_indices, :]
+            if first_RUN: print(" \n X after freq Patchout: ", x.size())
+
+        if self.s_patchout_f_interleaved:
+            if first_RUN: print(f"WARNING!! Applying freq patchout interleaved feature extraction ")
+            if first_RUN: print(f"X Before freq Patchout of {self.s_patchout_t_interleaved} bands", x.size())
+
+            kept_indices = torch.arange(0, F_dim, self.s_patchout_f_interleaved)
+            x = x[:, :, kept_indices, :]
+            if first_RUN: print(" \n X after temp Patchout: ", x.size())
+
+        if self.s_patchout_t_indices:
+            if first_RUN: print(f"WARNING!! Applying temp patchout indices on feature extraction ")
+            if first_RUN: print(f"X Before temp Patchout of bands {self.s_patchout_t_indices} ", x.size())
+
+            kept_indices = torch.arange(T_dim)
+            for i in self.s_patchout_t_indices:
+                kept_indices = kept_indices[kept_indices!=int(i)]
+            x = x[:, :, :, kept_indices]
+            if first_RUN: print(" \n X after temp Patchout: ", x.size())
+
+        if self.s_patchout_t_interleaved:
+            if first_RUN: print(f"WARNING!! Applying temp patchout interleaved on feature extraction")
+            if first_RUN: print(f"X Before temp Patchout of {self.s_patchout_t_interleaved} bands", x.size())
+
+            kept_indices = torch.arange(0, T_dim, self.s_patchout_t_interleaved)
+            x = x[:, :, :, kept_indices]
+            if first_RUN: print(" \n X after temp Patchout: ", x.size())
 
         ###
         # Flatten the sequence
@@ -1037,6 +1078,10 @@ def get_model(
     u_patchout=0,
     s_patchout_t=0,
     s_patchout_f=0,
+    s_patchout_f_indices=(),
+    s_patchout_f_interleaved=0,
+    s_patchout_t_indices=(),
+    s_patchout_t_interleaved=0,
     checkpoint="",
     use_swa=True,
 ):
@@ -1090,7 +1135,10 @@ def get_model(
         raise RuntimeError(f"Unknown model {arch}")
     model = model_func(pretrained=pretrained, num_classes=n_classes, in_chans=in_channels,
                        img_size=input_size, stride=stride, u_patchout=u_patchout,
-                       s_patchout_t=s_patchout_t, s_patchout_f=s_patchout_f)
+                       s_patchout_t=s_patchout_t, s_patchout_f=s_patchout_f,
+                       s_patchout_f_indices=s_patchout_f_indices, s_patchout_f_interleaved=s_patchout_f_interleaved,
+                       s_patchout_t_indices=s_patchout_t_indices, s_patchout_t_interleaved=s_patchout_t_interleaved,
+    )
     model = fix_embedding_layer(model)
     model = lighten_model(model)
     # print(model)
