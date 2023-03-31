@@ -94,7 +94,7 @@ class Model(pl.LightningModule):
         )
         self.sigmoid = nn.Sigmoid()
 
-        self.best_checkpoint_path = "lininar_probes/best.ckpt"
+        self.best_checkpoint_path = "linear_probes/best.ckpt"
 
     def forward(self, x):
         return self.model(x)
