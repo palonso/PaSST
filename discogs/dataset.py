@@ -94,7 +94,7 @@ class DiscogsDataset(TorchDataset):
 
         if type(offset) is not int:
             max_frame = frames_num - self.melspectrogram_size
-            offset = random.randint(0, max_frame)
+            offset = random.randint(0, max(max_frame, 0))
 
         # offset: idx * bands * bytes per float
         offset_bytes = offset * self.n_bands * 2
