@@ -118,7 +118,7 @@ def default_conf():
     cycle_len = 5
     ramp_down_start = 10
     ramp_down_len = 30
-    last_lr_value = 1e-7
+    last_lr_value = 1e-6
     weight_decay=  0.0001
     timestamp = datetime.now().strftime("%y%m%d-%H%M%S")
 
