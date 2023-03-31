@@ -218,7 +218,10 @@ class EmbeddingDataset(Dataset):
         return embedding, target.astype("float32")
 
     def post_process(self, embedding):
-        # todo: implement other postprocessings
+        # todo: implement other postprocessing
+        if len(embedding.shape) == 2:
+            embedding = np.mean(embedding, axis=0)
+
         embedding = embedding.reshape(3, -1)
         embedding_de = {
             "c": embedding[0],
