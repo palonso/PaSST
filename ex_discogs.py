@@ -12,7 +12,7 @@ import sys
 
 import torch
 from pytorch_lightning.callbacks import ModelCheckpoint
-from pytorch_lightning.loggers import CometLogger
+from pytorch_lightning.loggers import CometLogger, CSVLogger
 from sacred.config_helpers import DynamicIngredient, CMD
 from torch.nn import functional as F
 import numpy as np
@@ -371,8 +371,9 @@ def main(_run, _config, _log, _rnd, _seed):
             save_dir=save_dir,
             experiment_name=_config["timestamp"],
             )
-        trainer.logger = comet_logger
-        comet_logger.log_hyperparams(_config)
+        csv_logger = CSVLogger(save_dir=save_dir)
+        trainer.logger_connector.on_trainer_init([comet_logger, csv_logger], 50, 50, True) 
+        trainer.logger.log_hyperparams(_config)
 
     trainer.fit(
         modul,
