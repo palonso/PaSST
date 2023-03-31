@@ -326,7 +326,7 @@ class M(Ba3lModule):
         from discogs.dataset import get_predict_set
         return DataLoader(
             get_predict_set(),
-            batch_size=20,
+            batch_size=32,
             num_workers=16,
             )
 
