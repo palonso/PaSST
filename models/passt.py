@@ -311,6 +311,71 @@ class PatchEmbed(nn.Module):
         if first_RUN: print("self.norm(x)", x.size())
         return x
 
+class PatchEmbedFreq(nn.Module):
+    """ 2D Spectrogram to Patch Embedding
+        The main idea is that we use a different projector for every frequency patch.
+        The mel spec is not linear so it should make sense to learn specialized embeddings.j
+    """
+
+    def __init__(self, img_size=224, patch_size=16, stride=16, in_chans=3, embed_dim=768, norm_layer=None,
+                 flatten=True, old_proj=None):
+        super().__init__()
+        img_size = to_2tuple(img_size)
+        patch_size = to_2tuple(patch_size)
+        stride = to_2tuple(stride)
+        self.img_size = img_size
+        self.patch_size = patch_size
+        self.stride = stride
+        self.grid_size = (img_size[0] // stride[0], img_size[1] // stride[1])
+        self.num_patches = self.grid_size[0] * self.grid_size[1]
+        self.num_f_patches = self.grid_size[0]
+        self.flatten = flatten
+        self.embed_dim = embed_dim
+        self.projs = nn.ModuleList([
+            nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=stride) for _ in range(self.num_f_patches)
+        ])
+
+        #initialize each one to old weights:
+        if old_proj:
+            for proj in self.projs:
+                proj.load_state_dict(old_proj.state_dict())
+
+        self.lb = [i * self.stride[0] for i in range(self.num_f_patches)]
+        self.hb = [i * self.stride[0] + self.patch_size[0] for i in range(self.num_f_patches)]
+
+        if first_RUN: print("lb embeddings", self.lb)
+        if first_RUN: print("hb embeddings", self.hb)
+
+        self.norm = norm_layer(embed_dim) if norm_layer else nn.Identity()
+
+    def forward(self, x):
+        B, C, H, W = x.shape
+        if not (H == self.img_size[0] and W == self.img_size[1]):
+            warnings.warn(f"Input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]}).")
+        # to do maybe replace weights
+        x = torch.stack(
+            [
+                conv(x[:, :, lb: hb, :]).squeeze()
+                for conv, lb, hb in zip(self.projs, self.lb, self.hb)
+            ]
+        ).permute(1, 2, 0, 3)
+
+        if self.flatten:
+            x = x.flatten(2).transpose(1, 2)  # BCHW -> BNC
+        x = self.norm(x)
+        if first_RUN: print("self.norm(x)", x.size())
+        return x
+
+def replacePatchEmbedFreq(replace):
+    return PatchEmbedFreq(
+    img_size=replace.img_size,
+    patch_size=replace.patch_size,
+    stride=replace.stride,
+    in_chans=1,
+    embed_dim=replace.embed_dim,
+    flatten=replace.flatten,
+    old_proj=replace.proj,
+)
 
 class Attention(nn.Module):
     def __init__(self, dim, num_heads=8, qkv_bias=False, attn_drop=0., proj_drop=0.):
@@ -1028,6 +1093,8 @@ def fix_embedding_layer(model, embed="default"):
         model.patch_embed = PatchEmbedAdaptiveMean(replace=model.patch_embed)
     if embed == "am_keepconv":
         model.patch_embed = PatchEmbedAdaptiveMeanKeepConv(replace=model.patch_embed)
+    if embed == "freq_embed":
+        model.patch_embed = replacePatchEmbedFreq(model.patch_embed)
     return model
 
 @model_ing.command

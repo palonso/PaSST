@@ -60,7 +60,16 @@ def add_configs(ex):
             "net": DynamicIngredient("models.passt.model_ing", input_tdim=625, s_patchout_t=30, n_patches_t=87)
         }
         basedataset = dict(clip_length=10)
-    
+
+    @ex.named_config
+    def passt_discogs_10sec_fe():
+        'use PaSST model pretrained on Audioset (with SWA) ap=476; time encodings for up to 10 seconds with frequency-wise embeddings'
+        # python ex_audioset.py evaluate_only with passt_s_ap476
+        models = {
+            "net": DynamicIngredient("models.passt.model_ing", input_tdim=625, s_patchout_t=30, n_patches_t=87, embed="freq_embed")
+        }
+        basedataset = dict(clip_length=10)
+
     @ex.named_config
     def passt_discogs_20sec():
         'use PaSST model pretrained on Audioset (with SWA) ap=476; time encodings for up to 20 seconds'
