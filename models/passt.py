@@ -1188,6 +1188,7 @@ def get_model(
     s_patchout_t_interleaved=0,
     checkpoint="",
     use_swa=True,
+    load_head=False,
 ):
     """
     :param arch: Base ViT or Deit architecture
@@ -1254,7 +1255,7 @@ def get_model(
         delete = []
         for key in model_state_dict.keys():
             # head size may mismatch
-            if "head" in key:
+            if "head" in key and not load_head:
                 delete.append(key)
         for key in delete:
             del model_state_dict[key]
