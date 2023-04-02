@@ -33,6 +33,7 @@ def default_config():
     eval_base_dir = ""
 
     eval_groundtruth = "discogs/gt_val_all_400l_clean.pk"
+    test_groundtruth = "discogs/gt_test_all_400l_clean.pk"
     train_groundtruth = "discogs/gt_train_all_400l_clean.pk"
     predict_groundtruth = "discogs/gt_train_all_400l_clean.pk"
     num_of_classes = 400
