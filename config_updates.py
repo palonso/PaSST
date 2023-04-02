@@ -286,7 +286,6 @@ def add_configs(ex):
         'extract embeddings 10secs'
 
         inference = dict(
-            out_dir = "embeddings/mtt",
             n_block = 11,
         )
 
@@ -304,7 +303,6 @@ def add_configs(ex):
         'extract embeddings 20secs'
 
         inference = dict(
-            out_dir = "embeddings/mtt",
             n_block = 11,
         )
 
@@ -321,7 +319,6 @@ def add_configs(ex):
         'extract embeddings 30s'
 
         inference = dict(
-            out_dir = "embeddings/mtt",
             n_block = 11,
         )
 
