@@ -46,7 +46,7 @@ ex = Experiment("mtt")
 
 # define datasets and loaders
 ex.datasets.training.iter(DataLoader, static_args=dict(worker_init_fn=worker_init_fn), train=True, batch_size=28,
-                          num_workers=16, shuffle=None, dataset=CMD("/basedataset.get_train_set"))
+                          num_workers=16, shuffle=True, dataset=CMD("/basedataset.get_train_set"))
 
 get_validate_loader = ex.datasets.val.iter(DataLoader, static_args=dict(worker_init_fn=worker_init_fn),
                                             validate=True, batch_size=32, num_workers=16,
@@ -117,9 +117,9 @@ def default_conf():
     warm_up_len = 5
     cycle_len = 5
     ramp_down_start = 10
-    ramp_down_len = 30
+    ramp_down_len = 20
     last_lr_value = 1e-6
-    weight_decay=  0.0001
+    weight_decay=  0.001
     timestamp = datetime.now().strftime("%y%m%d-%H%M%S")
 
 # register extra possible configs
@@ -137,9 +137,18 @@ def get_scheduler_lambda(warm_up_len=5, cycle_len=5, ramp_down_start=50, ramp_do
 
 
 @ex.command
-def get_lr_scheduler(optimizer, schedule_mode):
+def get_lr_scheduler(optimizer, schedule_mode, lr):
     if schedule_mode in {"exp_lin", "cos_cyc"}:
         return torch.optim.lr_scheduler.LambdaLR(optimizer, get_scheduler_lambda())
+    if schedule_mode == "cycliclr":
+        return torch.optim.lr_scheduler.CyclicLR(
+                    optimizer=optimizer,
+                    base_lr=1e-7,
+                    max_lr=lr,
+                    mode="triangular2",
+                    step_size_up=208,
+                    cycle_momentum=False,
+        )
     raise RuntimeError(f"schedule_mode={schedule_mode} Unknown.")
 
 
@@ -221,11 +230,9 @@ class M(Ba3lModule):
             samples_loss = F.binary_cross_entropy_with_logits(
                 y_hat, y_mix, reduction="none")
             loss = samples_loss.mean()
-            samples_loss = samples_loss.detach()
         else:
             samples_loss = F.binary_cross_entropy_with_logits(y_hat, y, reduction="none")
             loss = samples_loss.mean()
-            samples_loss = samples_loss.detach()
 
         self.log("train_loss", loss, on_epoch=True)
 
@@ -265,7 +272,7 @@ class M(Ba3lModule):
             # self.log("validation.loss", loss, prog_bar=True, on_epoch=True, on_step=False)
             results = {**results, net_name + "val_loss": loss, net_name + "out": out, net_name + "target": y.detach()}
         results = {k: v.cpu() for k, v in results.items()}
-        self.log("val_loss", results["val_loss"], prog_bar=True)
+        # self.log("val_loss", results["val_loss"], prog_bar=True)
 
         return results
 
@@ -293,11 +300,10 @@ class M(Ba3lModule):
                         net_name + 'val_roc': torch.as_tensor(roc.mean()).cuda(),
                         # 'step': torch.as_tensor(self.current_epoch).cuda()\
                     }
-                # torch.save(average_precision, f"ap_perclass_{average_precision.mean()}.pt")
-                # print(average_precision)
-                self.log_dict(logs, sync_dist=True, on_epoch=True)
+                self.log_dict(logs, prog_bar=True)
 
             if self.distributed_mode:
+                all_avg_loss = self.all_gather(avg_loss)
                 allout = self.all_gather(out)
                 alltarget = self.all_gather(target)
                 alltarget = alltarget.reshape(-1, alltarget.shape[-1]).cpu().numpy()
@@ -307,13 +313,11 @@ class M(Ba3lModule):
                 roc = metrics.roc_auc_score(alltarget, allout, average=None)
                 if self.trainer.is_global_zero:
                     logs = {
+                        net_name + 'val_loss': all_avg_loss.mean(),
                         net_name + "val_ap": torch.as_tensor(average_precision.mean()).cuda(),
                         net_name + "val_roc": torch.as_tensor(roc.mean()).cuda(),
-                        # 'step': torch.as_tensor(self.current_epoch).cuda()
                     }
-                    self.log_dict(logs, sync_dist=True, on_epoch=True)
-            # else:
-            #     self.log_dict({net_name + "ap": logs[net_name + 'ap'], 'step': logs['step']}, sync_dist=True)
+                    self.log_dict(logs, prog_bar=True)
 
     def test_step(self, batch, batch_idx):
         x, f, y = batch
@@ -379,12 +383,17 @@ class M(Ba3lModule):
         # (LBFGS it is automatically supported, no need for closure function)
         # torch.optim.Adam(self.parameters(), lr=self.config.lr)
 
+        for idx, (name, param) in enumerate(self.net.named_parameters()):
+            if name in ("dist_token", "cls_token", "norm.bias", "norm.weight", "time_new_pos_embed", "freq_new_pos_embed", "new_pos_embed"):
+                param.requires_grad = False
+
         lr = self.config.lr
         lr_orig = lr
         lr_mult = self.config.lr_mult
         layer_names = []
         for idx, (name, param) in enumerate(self.net.named_parameters()):
-            layer_names.append(name)
+            if param.requires_grad:
+                layer_names.append(name)
  
         layer_names.reverse()
 
@@ -458,14 +467,16 @@ def main(_run, _config, _log, _rnd, _seed):
 
     modul = M(ex)
 
-    project_name = _config["basedataset"]["name"]
-    comet_logger = CometLogger(
-        project_name=project_name,
-        api_key=os.environ["COMET_API_KEY"],
-        save_dir = Path("output", project_name, _config["timestamp"])
-        )
-    trainer.logger = comet_logger
-    comet_logger.log_hyperparams(_config)
+    # rather not set or 0
+    if os.environ["NODE_RANK"] == "0":
+        project_name = _config["basedataset"]["name"]
+        comet_logger = CometLogger(
+            project_name=project_name,
+            api_key=os.environ["COMET_API_KEY"],
+            save_dir = Path("output", project_name, _config["timestamp"])
+            )
+        trainer.logger = comet_logger
+        comet_logger.log_hyperparams(_config)
 
     trainer.fit(
         modul,
