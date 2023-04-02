@@ -243,7 +243,7 @@ class M(Ba3lModule):
         results["filename"] = f
         return results
 
-    def validation_step(self, batch, batch_idx):
+    def validation_step(self, batch, batch_idx, stage="val"):
         x, f, y = batch
         if self.mel:
             x = self.mel_forward(x)
@@ -258,16 +258,19 @@ class M(Ba3lModule):
             loss = samples_loss.mean()
             out = torch.sigmoid(y_hat.detach())
             # self.log("validation.loss", loss, prog_bar=True, on_epoch=True, on_step=False)
-            results = {**results, net_name + "val_loss": loss, net_name + "out": out, net_name + "target": y.detach()}
+            results = {**results, net_name + f"{stage}_loss": loss, net_name + "out": out, net_name + "target": y.detach()}
         results = {k: v.cpu() for k, v in results.items()}
         return results
 
-    def validation_epoch_end(self, outputs):
+    def test_step(self, batch, batch_idx):
+        return self.validation_step(batch, batch_idx, stage="test")
+
+    def validation_epoch_end(self, outputs, stage="val"):
         model_name = [("", self.net)]
         if self.do_swa:
             model_name = model_name + [("swa_", self.net_swa)]
         for net_name, net in model_name:
-            avg_loss = torch.stack([x[net_name + 'val_loss'] for x in outputs]).mean()
+            avg_loss = torch.stack([x[net_name + f'{stage}_loss'] for x in outputs]).mean()
             out = torch.cat([x[net_name + 'out'] for x in outputs], dim=0)
             target = torch.cat([x[net_name + 'target'] for x in outputs], dim=0)
 
@@ -281,12 +284,10 @@ class M(Ba3lModule):
                     roc = metrics.roc_auc_score(target.numpy(), out.numpy(), average=None)
                 except ValueError:
                     roc = np.array([np.nan] * self.net.n_classes)
-                logs = {net_name + 'val.loss': torch.as_tensor(avg_loss).cuda(),
-                        net_name + 'ap': torch.as_tensor(average_precision.mean()).cuda(),
-                        net_name + 'roc': torch.as_tensor(roc.mean()).cuda(),
+                logs = {net_name + f'{stage}_loss': torch.as_tensor(avg_loss).cuda(),
+                        net_name + f'{stage}_ap': torch.as_tensor(average_precision.mean()).cuda(),
+                        net_name + f'{stage}_roc': torch.as_tensor(roc.mean()).cuda(),
                         'step': torch.as_tensor(self.current_epoch).cuda()}
-                # torch.save(average_precision, f"ap_perclass_{average_precision.mean()}.pt")
-                # print(average_precision)
                 self.log_dict(logs)
 
             if self.distributed_mode:
@@ -299,13 +300,14 @@ class M(Ba3lModule):
                 roc = metrics.roc_auc_score(alltarget, allout, average=None)
                 if self.trainer.is_global_zero:
                     logs = {
-                        net_name + "ap": torch.as_tensor(average_precision.mean()).cuda(),
-                        net_name + "roc": torch.as_tensor(roc.mean()).cuda(),
+                        net_name + f"{stage}_ap": torch.as_tensor(average_precision.mean()).cuda(),
+                        net_name + f"{stage}_roc": torch.as_tensor(roc.mean()).cuda(),
                         'step': torch.as_tensor(self.current_epoch).cuda()
                     }
                     self.log_dict(logs, sync_dist=False)
-            # else:
-            #     self.log_dict({net_name + "ap": logs[net_name + 'ap'], 'step': logs['step']}, sync_dist=True)
+
+    def test_epoch_end(self, outputs):
+        self.validation_epoch_end(outputs, stage="test")
 
     def configure_optimizers(self):
         # REQUIRED
@@ -325,6 +327,14 @@ class M(Ba3lModule):
         from discogs.dataset import get_predict_set
         return DataLoader(
             get_predict_set(),
+            batch_size=24,
+            num_workers=16,
+            )
+
+    def test_dataloader(self):
+        from discogs.dataset import get_test_set
+        return DataLoader(
+            get_test_set(),
             batch_size=24,
             num_workers=16,
             )
