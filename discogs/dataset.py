@@ -192,11 +192,12 @@ class ExhaustiveInferenceDataset(DiscogsDataset):
         """
 
         filename, offset = self.filenames_with_patch[index]
+        target = self.groundtruth[filename].astype("float16")
 
         melspectrogram_file = pathlib.Path(self.base_dir, filename)
         melspectrogram = self.load_melspectrogram(melspectrogram_file, offset)
 
-        return melspectrogram, filename, np.array([], dtype="float16")
+        return melspectrogram, str(filename), target
 
 # @dataset.command
 # def get_train_set(train_groundtruth):
