@@ -328,7 +328,8 @@ def add_configs(ex):
                 arch="passt_s_swa_p16_128_ap476_discogs",
                 # checkpoint="output/discogs/230325-141455/discogs/ec14e4ef8b104814aa5ec985803bb9d8/checkpoints/epoch=46-step=195848.ckpt",
                 # checkpoint="output/discogs/230325-141455/discogs/ec14e4ef8b104814aa5ec985803bb9d8/checkpoints/epoch=66-step=279188.ckpt",
-                checkpoint="output/discogs/230325-141455/discogs/ec14e4ef8b104814aa5ec985803bb9d8/checkpoints/epoch=90-step=379196.ckpt",
+                # checkpoint="output/discogs/230325-141455/discogs/ec14e4ef8b104814aa5ec985803bb9d8/checkpoints/epoch=90-step=379196.ckpt",
+                checkpoint="output/discogs/230325-141455/discogs/ec14e4ef8b104814aa5ec985803bb9d8/checkpoints/epoch=129-step=541709.ckpt",
                 use_swa = True,
             )
         }
