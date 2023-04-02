@@ -289,7 +289,8 @@ class M(Ba3lModule):
                         'step': torch.as_tensor(self.current_epoch).cuda()}
                 # torch.save(average_precision, f"ap_perclass_{average_precision.mean()}.pt")
                 # print(average_precision)
-                self.log_dict(logs, sync_dist=True)
+                self.log_dict(logs)
+
             if self.distributed_mode:
                 allout = self.all_gather(out)
                 alltarget = self.all_gather(target)
