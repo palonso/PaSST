@@ -211,11 +211,9 @@ class M(Ba3lModule):
             samples_loss = F.binary_cross_entropy_with_logits(
                 y_hat, y_mix, reduction="none")
             loss = samples_loss.mean()
-            samples_loss = samples_loss.detach()
         else:
             samples_loss = F.binary_cross_entropy_with_logits(y_hat, y, reduction="none")
             loss = samples_loss.mean()
-            samples_loss = samples_loss.detach()
 
         results = {"loss": loss, }
 
