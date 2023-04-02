@@ -511,6 +511,22 @@ def extract_embeddings(_run, _config, _log, _rnd, _seed):
             np.save(file_path, v)
 
 @ex.command
+def test(_config):
+    trainer = ex.get_trainer()
+    modul = M(ex)
+    modul.eval()
+
+    if os.environ["NODE_RANK"] == "0":
+        project_name = "discogs_test"
+        trainer.logger = CometLogger(
+            project_name=project_name,
+            api_key=os.environ["COMET_API_KEY"],
+        )
+        trainer.logger.log_hyperparams(_config)
+
+    trainer.test(modul)
+
+@ex.command
 def compute_norm_stats(_run, _config, _log, _rnd, _seed):
     # force overriding the config, not logged = not recommended
     loader = ex.get_train_dataloaders()
