@@ -681,6 +681,42 @@ class PaSST(nn.Module):
             random_indices = torch.randperm(F_dim)[:F_dim - self.s_patchout_f].sort().values
             x = x[:, :, random_indices, :]
             if first_RUN: print(" \n X after freq Patchout: ", x.size())
+
+        if self.s_patchout_f_indices:
+            if first_RUN: print(f"WARNING!! Applying freq patchout indices on feature extraction ")
+            if first_RUN: print(f"X Before Freq Patchout of bands {self.s_patchout_f_indices} ", x.size())
+
+            kept_indices = torch.arange(F_dim)
+            for i in self.s_patchout_f_indices:
+                kept_indices = kept_indices[kept_indices!=int(i)]
+            x = x[:, :, kept_indices, :]
+            if first_RUN: print(" \n X after freq Patchout: ", x.size())
+
+        if self.s_patchout_f_interleaved:
+            if first_RUN: print(f"WARNING!! Applying freq patchout interleaved feature extraction ")
+            if first_RUN: print(f"X Before freq Patchout of {self.s_patchout_t_interleaved} bands", x.size())
+
+            kept_indices = torch.arange(0, F_dim, self.s_patchout_f_interleaved)
+            x = x[:, :, kept_indices, :]
+            if first_RUN: print(" \n X after temp Patchout: ", x.size())
+
+        if self.s_patchout_t_indices:
+            if first_RUN: print(f"WARNING!! Applying temp patchout indices on feature extraction ")
+            if first_RUN: print(f"X Before temp Patchout of bands {self.s_patchout_t_indices} ", x.size())
+
+            kept_indices = torch.arange(T_dim)
+            for i in self.s_patchout_t_indices:
+                kept_indices = kept_indices[kept_indices!=int(i)]
+            x = x[:, :, :, kept_indices]
+            if first_RUN: print(" \n X after temp Patchout: ", x.size())
+
+        if self.s_patchout_t_interleaved:
+            if first_RUN: print(f"WARNING!! Applying temp patchout interleaved on feature extraction")
+            if first_RUN: print(f"X Before temp Patchout of {self.s_patchout_t_interleaved} bands", x.size())
+
+            kept_indices = torch.arange(0, T_dim, self.s_patchout_t_interleaved)
+            x = x[:, :, :, kept_indices]
+            if first_RUN: print(" \n X after temp Patchout: ", x.size())
         ###
         # Flatten the sequence
         x = x.flatten(2).transpose(1, 2)
