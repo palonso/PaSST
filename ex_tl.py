@@ -17,7 +17,7 @@ from torch.utils.data import Dataset, DataLoader
 
 from helpers.ramp import exp_warmup_linear_down
 
-ex = Experiment("tl_mtt")
+ex = Experiment("mlp_probing")
 
 
 @ex.config
@@ -305,7 +305,7 @@ class DataModule(pl.LightningDataModule):
 
 @ex.automain
 def tl_pipeline(_run, _config):
-    print("starting tl experimet")
+    print("starting tl experiment")
 
     datamodule = DataModule()
     model = Model(
@@ -316,7 +316,7 @@ def tl_pipeline(_run, _config):
     trainer = ex.get_trainer()
 
     comet_logger = CometLogger(
-        project_name=_run.experiment_info["name"],
+        project_name=_config["project_name"],
         api_key=os.environ["COMET_API_KEY"],
         experiment_name=_run._id,
         )
