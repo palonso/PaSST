@@ -381,7 +381,7 @@ def main(_run, _config, _log, _rnd, _seed):
             experiment_name=_config["timestamp"],
             )
         csv_logger = CSVLogger(save_dir=save_dir)
-        trainer.logger_connector.on_trainer_init([comet_logger, csv_logger], 50, 50, True) 
+        trainer.logger_connector.on_trainer_init([comet_logger, csv_logger], 200, 200, False)
         trainer.logger.log_hyperparams(_config)
 
     trainer.fit(
