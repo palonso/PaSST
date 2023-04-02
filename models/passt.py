@@ -923,6 +923,7 @@ def deit_base_distilled_patch16_384(pretrained=False, **kwargs):
     ImageNet-1k weights from https://github.com/facebookresearch/deit.
     """
     print("\n\n Loading DEIT BASE 384\n\n")
+    print(f"Pretrained weights: {pretrained}")
     model_kwargs = dict(patch_size=16, embed_dim=768, depth=12, num_heads=12, **kwargs)
     model = _create_vision_transformer(
         'deit_base_distilled_patch16_384', pretrained=pretrained, distilled=True, **model_kwargs)
