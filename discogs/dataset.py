@@ -90,30 +90,41 @@ class DiscogsDataset(TorchDataset):
         return melspectrogram, filename, target
 
     def load_melspectrogram(self, melspectrogram_file: pathlib.Path, offset: int= None):
-        frames_num = melspectrogram_file.stat().st_size // (2 * self.n_bands)  # each float16 has 2 bytes
+        if melspectrogram_file.suffix == ".npy":
+            melspectrogram = np.load(melspectrogram_file).astype("float16")
 
-        if type(offset) is not int:
-            max_frame = frames_num - self.melspectrogram_size
-            offset = random.randint(0, max(max_frame, 0))
+            if melspectrogram.shape[0] < self.melspectrogram_size:
+                padding_size = self.melspectrogram_size - melspectrogram.shape[0]
+                melspectrogram = np.vstack([melspectrogram, np.zeros([padding_size, self.n_bands], dtype="float16")])
+                melspectrogram = np.roll(melspectrogram, padding_size // 2, axis=0)  # center the padding
+            else:
+                melspectrogram = melspectrogram[:self.melspectrogram_size, :]
 
-        # offset: idx * bands * bytes per float
-        offset_bytes = offset * self.n_bands * 2
-    
-        skip_frames = max(offset + self.melspectrogram_size - frames_num, 0)
-        frames_to_read = self.melspectrogram_size - skip_frames
+        else:
+            frames_num = melspectrogram_file.stat().st_size // (2 * self.n_bands)  # each float16 has 2 bytes
 
-        fp = np.memmap(melspectrogram_file, dtype='float16', mode='r',
-                       shape=(frames_to_read, self.n_bands), offset=offset_bytes)
+            if type(offset) is not int:
+                max_frame = frames_num - self.melspectrogram_size
+                offset = random.randint(0, max_frame)
 
-        # put the data in a numpy ndarray
-        melspectrogram = np.array(fp, dtype='float16')
+            # offset: idx * bands * bytes per float
+            offset_bytes = offset * self.n_bands * 2
 
-        if frames_to_read < self.melspectrogram_size:
-            padding_size = self.melspectrogram_size - frames_to_read
-            melspectrogram = np.vstack([melspectrogram, np.zeros([padding_size, self.n_bands], dtype="float16")])
-            melspectrogram = np.roll(melspectrogram, padding_size // 2, axis=0)  # center the padding
+            skip_frames = max(offset + self.melspectrogram_size - frames_num, 0)
+            frames_to_read = self.melspectrogram_size - skip_frames
 
-        del fp
+            fp = np.memmap(melspectrogram_file, dtype='float16', mode='r',
+                        shape=(frames_to_read, self.n_bands), offset=offset_bytes)
+
+            # put the data in a numpy ndarray
+            melspectrogram = np.array(fp, dtype='float16')
+
+            if frames_to_read < self.melspectrogram_size:
+                padding_size = self.melspectrogram_size - frames_to_read
+                melspectrogram = np.vstack([melspectrogram, np.zeros([padding_size, self.n_bands], dtype="float16")])
+                melspectrogram = np.roll(melspectrogram, padding_size // 2, axis=0)  # center the padding
+
+            del fp
 
         # transpose, PaSST expects dims as [b,e,f,t]
         melspectrogram = melspectrogram.T
@@ -149,17 +160,20 @@ class ExhaustiveInferenceDataset(DiscogsDataset):
         self.hop_size = self.melspectrogram_size // 2 if half_overlap else self.melspectrogram_size
         self.half_overlap = half_overlap
 
-        filenames = []
-        for filename in self.filenames.values():
-            melspectrogram_file = pathlib.Path(self.base_dir, filename)
-            frames_num = melspectrogram_file.stat().st_size // (2 * self.n_bands)  # each float16 has 2 bytes
-            if self.half_overlap:
-                frames_num -= self.hop_size
+        if pathlib.Path(list(self.filenames.values())[0]).suffix == ".memmap":
+            filenames = []
+            for filename in self.filenames.values():
+                melspectrogram_file = pathlib.Path(self.base_dir, filename)
+                frames_num = melspectrogram_file.stat().st_size // (2 * self.n_bands)  # each float16 has 2 bytes
+                if self.half_overlap:
+                    frames_num -= self.hop_size
 
-            # allow 10% margin with zero-pad
-            n_patches = int((frames_num * 1.1) // self.hop_size)
-            # filenames is a tuple (filename, offset)
-            filenames.extend([(filename, i * self.hop_size) for i in range(n_patches)])
+                # allow 10% margin with zero-pad
+                n_patches = int((frames_num * 1.1) // self.hop_size)
+                # filenames is a tuple (filename, offset)
+                filenames.extend([(filename, i * self.hop_size) for i in range(n_patches)])
+        else:
+            filenames = list(zip(self.filenames.values(), [0] * len(self.filenames)))
 
         self.filenames_with_patch = dict(zip(range(len(filenames)), filenames))
         self.length = len(self.filenames_with_patch)
