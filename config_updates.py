@@ -77,7 +77,7 @@ def add_configs(ex):
                 input_tdim=625,
                 s_patchout_t=30,
                 n_patches_t=87,
-                arch="passt_s_swa_p16_128_ap476_discogs",
+                arch="passt_s_swa_p16_128_ap476",
             )
         }
         basedataset = dict(clip_length=10)
@@ -93,7 +93,7 @@ def add_configs(ex):
                 s_patchout_t=30,
                 n_patches_t=87,
                 embed="freq_embed",
-                arch="passt_s_swa_p16_128_ap476_discogs",
+                arch="passt_s_swa_p16_128_ap476",
             )
         }
         basedataset = dict(clip_length=10)
@@ -108,7 +108,7 @@ def add_configs(ex):
                 input_tdim=1250,
                 s_patchout_t=60,
                 n_patches_t=124,
-                arch="passt_s_swa_p16_128_ap476_discogs",
+                arch="passt_s_swa_p16_128_ap476",
             )
         }
         basedataset = dict(clip_length=20)
@@ -122,7 +122,7 @@ def add_configs(ex):
                 "models.passt.model_ing",
                 input_tdim=1875,
                 s_patchout_t=90,
-                arch="passt_s_swa_p16_128_ap476_discogs",
+                arch="passt_s_swa_p16_128_ap476",
             )
         }
         basedataset = dict(clip_length=30)
