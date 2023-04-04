@@ -114,8 +114,13 @@ class DiscogsDataset(TorchDataset):
             skip_frames = max(offset + self.melspectrogram_size - frames_num, 0)
             frames_to_read = self.melspectrogram_size - skip_frames
 
-            fp = np.memmap(melspectrogram_file, dtype='float16', mode='r',
-                        shape=(frames_to_read, self.n_bands), offset=offset_bytes)
+            try:
+                fp = np.memmap(melspectrogram_file, dtype='float16', mode='r',
+                            shape=(frames_to_read, self.n_bands), offset=offset_bytes)
+            except Exception:
+                print(f"Error loading {melspectrogram_file}")
+                print(f"num frames: {frames_num}, offset: {offset}, skip frames: {skip_frames}, frames to read: {frames_to_read}")
+                raise
 
             # put the data in a numpy ndarray
             melspectrogram = np.array(fp, dtype='float16')
