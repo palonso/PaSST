@@ -174,8 +174,8 @@ class ExhaustiveInferenceDataset(DiscogsDataset):
                 if self.half_overlap:
                     frames_num -= self.hop_size
 
-                # allow 10% margin with zero-pad
-                n_patches = int((frames_num * 1.1) // self.hop_size)
+                # allow 1/4 margin with zero-pad
+                n_patches = int((frames_num + self.melspectrogram_size // 4) // self.hop_size)
                 # filenames is a tuple (filename, offset)
                 filenames.extend([(filename, i * self.hop_size) for i in range(n_patches)])
         else:
