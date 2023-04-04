@@ -465,7 +465,7 @@ def evaluate_only(_run, _config, _log, _rnd, _seed):
     trainer.val_dataloaders = None
     print(f"\n\nValidation len={len(val_loader)}\n")
     res = trainer.validate(modul, val_dataloaders=val_loader)
-    print("\n\n Validtaion:")
+    print("\n\n Validation:")
     print(res)
 
 @ex.command
