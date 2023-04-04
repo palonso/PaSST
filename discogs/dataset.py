@@ -275,8 +275,8 @@ def get_base_test_set(test_groundtruth, base_dir, clip_length):
     return ds
 
 @dataset.command
-def get_base_predict_set(predict_groundtruth, base_dir, clip_length):
-    ds = ExhaustiveInferenceDataset(predict_groundtruth, base_dir, clip_length=clip_length)
+def get_base_predict_set(predict_groundtruth, base_dir, clip_length, half_overlap=True):
+    ds = ExhaustiveInferenceDataset(predict_groundtruth, base_dir, clip_length=clip_length, half_overlap=half_overlap)
     return ds
 
 @dataset.command(prefix='roll_conf')
