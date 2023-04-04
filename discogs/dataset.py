@@ -166,7 +166,7 @@ class ExhaustiveInferenceDataset(DiscogsDataset):
         self.hop_size = self.melspectrogram_size // 2 if half_overlap else self.melspectrogram_size
         self.half_overlap = half_overlap
 
-        if pathlib.Path(list(self.filenames.values())[0]).suffix == ".mmap":
+        if pathlib.Path(list(self.filenames.values())[0]).suffix in (".mmap", ".dat"):
             filenames = []
             for filename in self.filenames.values():
                 melspectrogram_file = pathlib.Path(self.base_dir, filename)
