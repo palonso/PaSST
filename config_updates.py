@@ -329,8 +329,8 @@ def add_configs(ex):
                 use_swa = True,
             )
         }
-    @ex.named_config
 
+    @ex.named_config
     def  passt_discogs20sec_inference():
         'extract embeddings 20secs'
 
