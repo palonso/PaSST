@@ -24,8 +24,10 @@ ex = Experiment("mlp_probing")
 def default_config():
     trainer = {
         "max_epochs": 60,
+        "max_lr_epochs": 10,
         "gpus": 1,
         "num_sanity_val_steps": 0,
+        "monitor": "val_loss",
     }
     model = {
         "drop_out": 0.5,
@@ -37,6 +39,7 @@ def default_config():
         # exponential
         "warmup_epochs": 10,
         "gamma": 0.5,
+        "hidden_units": 512,
     }
     data = {
         "base_dir": "embeddings/mtt/30sec/no_swa/10/",
@@ -62,6 +65,7 @@ class Model(pl.LightningModule):
         weight_decay,
         warmup_epochs,
         gamma,
+        hidden_units,
     ):
         super().__init__()
 
@@ -72,29 +76,17 @@ class Model(pl.LightningModule):
         self.warmup_epochs = warmup_epochs
         self.gamma = gamma
 
-        # self.bn = nn.BatchNorm1d(num_features=in_features)
-        # self.linear = nn.Linear(
-        #     in_features=in_features,
-        #     out_features=n_classes,
-        # )
-        # self.relu = nn.ReLU()
-        # self.bn2 = nn.BatchNorm1d(num_features=n_classes)
-        # self.dropout = nn.Dropout(drop_out)
-        # self.linear2 = nn.Linear(
-        #     in_features=n_classes,
-        #     out_features=n_classes,
-        # )
         self.model = nn.Sequential(
         #   nn.BatchNorm1d(in_features),
-          nn.Linear(in_features, 512),
+          nn.Linear(in_features, hidden_units),
           nn.ReLU(),
           nn.Dropout(drop_out),
-        #   nn.BatchNorm1d(512),
-          nn.Linear(512, n_classes),
+        #   nn.BatchNorm1d(hidden_units),
+          nn.Linear(hidden_units, n_classes),
         )
         self.sigmoid = nn.Sigmoid()
 
-        self.best_checkpoint_path = "linear_probes/best.ckpt"
+        self.best_checkpoint_path = "best"
 
     def forward(self, x):
         return self.model(x)
@@ -136,7 +128,8 @@ class Model(pl.LightningModule):
     def test_epoch_end(self, outputs: List[Any]) -> None:
         self.validation_epoch_end(outputs, key="test")
 
-    def configure_optimizers(self):
+    @ex.capture(prefix="trainer")
+    def configure_optimizers(self, max_epochs, max_lr_epochs):
         optimizer = optim.AdamW(self.parameters(), lr=self.max_lr, weight_decay=self.weight_decay)
 
         if self.scheduler == "cyclic":
@@ -172,20 +165,27 @@ class Model(pl.LightningModule):
             schedulers = [
                 optim.lr_scheduler.LambdaLR(
                     optimizer=optimizer,
-                    lr_lambda=exp_warmup_linear_down(self.warmup_epochs, 30, 30, self.base_lr)
+                    lr_lambda=exp_warmup_linear_down(self.warmup_epochs, max_epochs - max_lr_epochs, max_lr_epochs, self.base_lr)
                 ),
             ]
 
         return [optimizer], schedulers
 
-    def configure_callbacks(self):
+    @ex.capture(prefix="trainer")
+    def configure_callbacks(self, monitor="val_roc"):
+        if "roc" in monitor:
+            mode = "max"
+        elif "loss" in monitor:
+            mode = "min"
+
         return [
             ModelCheckpoint(
                 filename = self.best_checkpoint_path,
                 save_top_k=1,
-                monitor="val_roc",
-                mode="max",
+                monitor=monitor,
+                mode=mode,
                 save_weights_only=True,
+                verbose=True,
             ),
             # LearningRateMonitor(logging_interval="step")
         ]
@@ -248,16 +248,23 @@ class DataModule(pl.LightningDataModule):
             reduce,
             token_size,
             n_classes,
+            train_groundtruth_file=None,
+            valid_groundtruth_file=None,
+            test_groundtruth_file=None,
         ):
         super().__init__()
         self.base_dir = base_dir
         self.metadata_dir = Path(metadata_dir)
         self.batch_size = batch_size
         self.num_workers = num_workers
-        
-        self.train_groundtruth_file = self.metadata_dir / "groundtruth-train.pk"
-        self.val_groundtruth_file = self.metadata_dir / "groundtruth-validation.pk"
-        self.test_groundtruth_file = self.metadata_dir / "groundtruth-test.pk"
+
+        train_file = train_groundtruth_file if train_groundtruth_file else "groundtruth-train.pk"
+        valid_file = valid_groundtruth_file if valid_groundtruth_file else "groundtruth-validation.pk"
+        test_file = test_groundtruth_file if test_groundtruth_file else "groundtruth-test.pk"
+
+        self.train_groundtruth_file = self.metadata_dir / train_file
+        self.val_groundtruth_file = self.metadata_dir / valid_file
+        self.test_groundtruth_file = self.metadata_dir / test_file
 
         self.types = types
         self.reduce = reduce
@@ -327,5 +334,5 @@ def tl_pipeline(_run, _config):
 
     model.eval()
     trainer.test(
-        model=model, datamodule=datamodule, ckpt_path=model.best_checkpoint_path
+        model=model, datamodule=datamodule, ckpt_path="best"
     )
